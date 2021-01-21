@@ -6,3 +6,5 @@
 GPATH
 GTAGS
 GRTAGS
+/obj/
+/libs/
