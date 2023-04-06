@@ -2739,8 +2739,7 @@ void retro_set_environment(retro_environment_t cb)
       if (log_cb)
          log_cb(RETRO_LOG_WARN,"retro_set_environment: GET_CORE_OPTIONS_VERSION failed, not setting core-options now.\n");
    }
-
-   if (version == 1)
+   else if (version == 1)
       cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS, core_options);
    else
    {
