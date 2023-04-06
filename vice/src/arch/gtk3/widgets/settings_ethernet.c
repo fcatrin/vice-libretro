@@ -5,6 +5,7 @@
  */
 
 /*
+ * $VICERES ETHERNET_DRIVER     x64 x64sc xscpu64 x128 xvic
  * $VICERES ETHERNET_INTERFACE  x64 x64sc xscpu64 x128 xvic
  */
 
@@ -30,33 +31,29 @@
  */
 
 #include "vice.h"
-
 #include <stdio.h>
 #include <string.h>
 #include <gtk/gtk.h>
+#include <stdbool.h>
 
-#include "vice_gtk3.h"
-#include "resources.h"
+#include "archdep.h"
 #include "lib.h"
 #include "log.h"
 #include "machine.h"
 #ifdef HAVE_RAWNET
 # include "rawnet.h"
 #endif
-#include "resourcewidgetmanager.h"
+#include "resources.h"
 #include "uisettings.h"
+#include "vice_gtk3.h"
 
 #include "settings_ethernet.h"
 
 
 #ifdef HAVE_RAWNET
 static void clean_iface_list(void);
+static void clean_driver_list(void);
 #endif
-
-
-/** \brief  Resource widget manager instance
- */
-static resource_widget_manager_t manager;
 
 
 /** \brief  Handler for the 'destroy' event of the main widget
@@ -68,20 +65,25 @@ static void on_settings_ethernet_destroy(GtkWidget *widget, gpointer data)
 {
 #ifdef HAVE_RAWNET
     clean_iface_list();
+    clean_driver_list();
 #endif
-    vice_resource_widget_manager_exit(&manager);
 }
 
 
-
 #ifdef HAVE_RAWNET
-
 /** \brief  List of available interfaces
  *
  * This list is dynamically generated and destroyed when the main widget
  * is destroyed.
  */
 static vice_gtk3_combo_entry_str_t *iface_list;
+
+/** \brief  List of available drivers
+ *
+ * This list is dynamically generated and destroyed when the main widget
+ * is destroyed.
+ */
+static vice_gtk3_combo_entry_str_t *driver_list;
 
 
 /** \brief  Build interface list for the combo box
@@ -119,13 +121,13 @@ static gboolean build_iface_list(void)
 
     num = 0;
     while (rawnet_enumadapter(&if_name, &if_desc)) {
-        iface_list[num].id = lib_stralloc(if_name);
+        iface_list[num].id = lib_strdup(if_name);
         /*
          * On Windows, the description string seems to be always present, on
          * Unix this isn't the case and NULL can be returned.
          */
         if (if_desc == NULL) {
-            iface_list[num].name = lib_stralloc(if_name);
+            iface_list[num].name = lib_strdup(if_name);
         } else {
             iface_list[num].name = lib_msprintf("%s (%s)", if_name, if_desc);
         }
@@ -139,6 +141,65 @@ static gboolean build_iface_list(void)
     iface_list[num].id = NULL;
     iface_list[num].name = NULL;
     rawnet_enumadapter_close();
+    return TRUE;
+}
+
+
+/** \brief  Build driver list for the combo box
+ *
+ * \return  TRUE if the list was generated
+ */
+static gboolean build_driver_list(void)
+{
+    int num = 0;
+    char *driver_name;
+    char *driver_desc;
+
+    /* get number of adapters */
+    if (!rawnet_enumdriver_open()) {
+        return FALSE;
+    }
+    while (rawnet_enumdriver(&driver_name, &driver_desc)) {
+        lib_free(driver_name);
+        if (driver_desc != NULL) {
+            lib_free(driver_desc);
+        }
+        num++;
+    }
+    rawnet_enumdriver_close();
+
+    /* allocate memory for list */
+    driver_list = lib_malloc((size_t)(num + 1) * sizeof *driver_list);
+
+    /* now add the list items */
+    if (!rawnet_enumdriver_open()) {
+        lib_free(driver_list);
+        driver_list = NULL;
+        return FALSE;
+    }
+
+    num = 0;
+    while (rawnet_enumdriver(&driver_name, &driver_desc)) {
+        driver_list[num].id = lib_strdup(driver_name);
+        /*
+         * On Windows, the description string seems to be always present, on
+         * Unix this isn't the case and NULL can be returned.
+         */
+        if (driver_desc == NULL) {
+            driver_list[num].name = lib_strdup(driver_name);
+        } else {
+            driver_list[num].name = lib_msprintf("%s (%s)", driver_name, driver_desc);
+        }
+        lib_free(driver_name);
+        if (driver_desc != NULL) {
+            lib_free(driver_desc);
+        }
+
+        num++;
+    }
+    driver_list[num].id = NULL;
+    driver_list[num].name = NULL;
+    rawnet_enumdriver_close();
     return TRUE;
 }
 
@@ -159,6 +220,41 @@ static void clean_iface_list(void)
     }
 }
 
+
+/** \brief  Free memory used by the driver list
+ */
+static void clean_driver_list(void)
+{
+    if (driver_list != NULL) {
+        int num = 0;
+        while (driver_list[num].id != NULL) {
+            lib_free(driver_list[num].id);
+            lib_free(driver_list[num].name);
+            num++;
+        }
+        lib_free(driver_list);
+        driver_list = NULL;
+    }
+}
+
+
+/** \brief  Create combo box with ethernet drivers
+ *
+ * \return  GtkComboBox
+ */
+static GtkWidget *create_driver_combo(void)
+{
+    GtkWidget *combo;
+
+    if (build_driver_list()) {
+        combo = vice_gtk3_resource_combo_box_str_new(
+                "ETHERNET_DRIVER",
+                driver_list);
+    } else {
+        combo = gtk_combo_box_text_new();
+    }
+    return combo;
+}
 
 
 /** \brief  Create combo box to select the ethernet interface
@@ -193,13 +289,10 @@ GtkWidget *settings_ethernet_widget_create(GtkWidget *parent)
     GtkWidget *label;
     char *text;
 #ifdef HAVE_RAWNET
-    GtkWidget *combo;
+    GtkWidget *iface_combo;
+    GtkWidget *driver_combo;
+    bool available = archdep_ethernet_available();
 #endif
-
-    /* initialize and register resource widget manager */
-    vice_resource_widget_manager_init(&manager);
-    ui_settings_set_resource_widget_manager(&manager);
-
 
     grid = vice_gtk3_grid_new_spaced(VICE_GTK3_DEFAULT, VICE_GTK3_DEFAULT);
 
@@ -227,15 +320,36 @@ GtkWidget *settings_ethernet_widget_create(GtkWidget *parent)
     }
 
 #ifdef HAVE_RAWNET
-    label = gtk_label_new("Ethernet device");
+    label = gtk_label_new("Ethernet driver:");
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    driver_combo = create_driver_combo();
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), driver_combo, 1, 0, 1, 1);
+
+    label = gtk_label_new("Ethernet interface:");
     gtk_widget_set_halign(label, GTK_ALIGN_START);
 
-    combo = create_device_combo();
-    vice_resource_widget_manager_add_widget(&manager, combo, NULL,
-            NULL, NULL, NULL);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), combo, 1, 0, 1, 1);
+    iface_combo = create_device_combo();
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), iface_combo, 1, 1, 1, 1);
 
+    if (!available) {
+        gtk_widget_set_sensitive(driver_combo, FALSE);
+        gtk_widget_set_sensitive(iface_combo, FALSE);
+        label = gtk_label_new(NULL);
+# ifdef UNIX_COMPILE
+        gtk_label_set_markup(GTK_LABEL(label),
+                "<i>VICE needs TUN/TAP support or the proper permissions (with libpcap) to be able to use ethernet emulation.</i>");
+# elif defined(WINDOWS_COMPILE)
+        gtk_label_set_markup(GTK_LABEL(label),
+                "<i>Couldn't load <b>wpcap.dll</b>, please install WinPCAP to use ethernet emulation.</i>");
+# else
+        gtk_label_set_markup(GTK_LABEL(label),
+                "<i>Ethernet emulation disabled due to unsupported OS.</i>");
+# endif
+        gtk_widget_set_halign(label, GTK_ALIGN_START);
+        gtk_grid_attach(GTK_GRID(grid), label, 0, 2, 2, 1);
+    }
 #else
     label = gtk_label_new("Ethernet not supported, please compile with "
             "--enable-ethernet.");
@@ -244,7 +358,6 @@ GtkWidget *settings_ethernet_widget_create(GtkWidget *parent)
 
     g_signal_connect(grid, "destroy", G_CALLBACK(on_settings_ethernet_destroy),
             NULL);
-
 
     gtk_widget_show_all(grid);
     return grid;

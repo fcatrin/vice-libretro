@@ -1,12 +1,11 @@
-/*! \file reu.c \n
- *  \author Andreas Boose, Spiro Trikaliotis, Jouko Valta, Richard Hable, Ettore Perazzoli\n
- *  \brief   REU emulation.
+/** \file   reu.c
+ * \brief   REU emulation
  *
- * reu.c - REU emulation.
- *
- * Written by
- *  Andreas Boose <viceteam@t-online.de>
- *  Spiro Trikaliotis <spiro.trikaliotis@gmx.de>
+ * \author  Andreas Boose
+ * \author  Spiro Trikaliotis
+ * \author  Jouko Valta
+ * \author  Richard Hable
+ * \author  Ettore Perazzoli
  *
  * Additions upon extensive REU hardware testing:
  *  Wolfgang Moser <http://d81.de>
@@ -15,7 +14,9 @@
  *  Jouko Valta <jopi@stekt.oulu.fi>
  *  Richard Hable <K3027E7@edvz.uni-linz.ac.at>
  *  Ettore Perazzoli <ettore@comm2000.it>
- *
+ */
+
+/*
  * This file is part of VICE, the Versatile Commodore Emulator.
  * See README for copyright notice.
  *
@@ -43,6 +44,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "alarm.h"
 #include "archdep.h"
 #include "cartio.h"
 #include "cartridge.h"
@@ -54,6 +56,7 @@
 #include "machine.h"
 #include "maincpu.h"
 #include "mem.h"
+#include "ram.h"
 #include "resources.h"
 #include "snapshot.h"
 #include "types.h"
@@ -239,11 +242,12 @@ static unsigned int reu_int_num;
 
 /*! \brief interface for BA interaction with CPU & VICII, used for x64sc */
 struct reu_ba_s {
-    reu_ba_check_callback_t *check;
-    reu_ba_steal_callback_t *steal;
-    int *cpu_ba;
-    int cpu_ba_mask;
-    int enabled;
+    reu_ba_check_callback_t *check; /*!< function that returns non zero when VICII uses the bus */
+    reu_ba_steal_callback_t *steal; /*!< function that increments main clock as long as VICII uses the bus */
+    int *cpu_ba;                    /*!< pointer to main cpu ba flags */
+    int cpu_ba_mask;                /*!< mask we should use in cpu_ba when REU DMA is active */
+    /* internal */
+    int enabled;                    /*!< flag that indicates if the above functions / variables have been registered, used to choose between x64 or x64sc hacks */
     int delay;
     int last_cycle;
 };
@@ -254,6 +258,8 @@ static struct reu_ba_s reu_ba = {
 
 static int reu_write_image = 0;
 
+static int floating_bus_value = 0xff;
+
 /* ------------------------------------------------------------------------- */
 
 /* some prototypes are needed */
@@ -262,18 +268,19 @@ static uint8_t reu_io2_read(uint16_t addr);
 static uint8_t reu_io2_peek(uint16_t addr);
 
 static io_source_t reu_io2_device = {
-    CARTRIDGE_NAME_REU,
-    IO_DETACH_RESOURCE,
-    "REU",
-    0xdf00, 0xdfff, REU_REG_LAST_REG,
-    0,
-    reu_io2_store,
-    reu_io2_read,
-    reu_io2_peek,
-    NULL, /* TODO: dump */
-    CARTRIDGE_REU,
-    IO_PRIO_HIGH, /* high priority so it will work together with cartridges like RR and SSV5 */
-    0
+    CARTRIDGE_NAME_REU,               /* name of the device */
+    IO_DETACH_RESOURCE,               /* use resource to detach the device when involved in a read-collision */
+    "REU",                            /* resource to set to '0' */
+    0xdf00, 0xdfff, REU_REG_LAST_REG, /* range for the device, regs:$df00-$df1f, mirrors:$df20-$dfff */
+    0,                                /* read validity is determined by the device upon a read */
+    reu_io2_store,                    /* store function */
+    NULL,                             /* NO poke function */
+    reu_io2_read,                     /* read function */
+    reu_io2_peek,                     /* peek function */
+    NULL,                             /* TODO: device state information dump function */
+    CARTRIDGE_REU,                    /* cartridge ID */
+    IO_PRIO_NORMAL,                   /* normal priority, device read needs to be checked for collisions */
+    0                                 /* insertion order, gets filled in by the registration function */
 };
 
 static io_source_list_t *reu_list_item = NULL;
@@ -331,6 +338,7 @@ static int set_reu_enabled(int value, void *param)
         if (export_add(&export_res_reu) < 0) {
             return -1;
         }
+
         reu_list_item = io_source_register(&reu_io2_device);
         reu_enabled = 1;
     }
@@ -414,8 +422,8 @@ static int set_reu_size(int val, void *param)
         case 8192:
         case 16384:
             rec_options.reg_bank_unused = 0;
-            rec_options.wrap_around_mask_when_storing = 0x00ffffff;
-            rec_options.dram_wrap_around = 0x01000000;
+            rec_options.dram_wrap_around = val * 1024;
+            rec_options.wrap_around_mask_when_storing = (val * 1024) - 1;
             break;
         default:
             log_message(reu_log, "Unknown REU size %d.", val);
@@ -530,7 +538,7 @@ static const cmdline_option_t cmdline_options[] =
       NULL, "Disable the RAM Expansion Unit" },
     { "-reusize", SET_RESOURCE, CMDLINE_ATTRIB_NEED_ARGS,
       NULL, NULL, "REUsize", NULL,
-      "<size in KB>", "Size of the RAM expansion unit. (128/256/512/1024/2048/4096/8192/16384)" },
+      "<size in KiB>", "Size of the RAM expansion unit. (128/256/512/1024/2048/4096/8192/16384)" },
     { "-reuimage", SET_RESOURCE, CMDLINE_ATTRIB_NEED_ARGS,
       NULL, NULL, "REUfilename", NULL,
       "<Name>", "Specify name of REU image" },
@@ -607,8 +615,67 @@ void reu_reset(void)
     rec.address_control_reg = REU_REG_RW_ADDR_CONTROL_UNUSED_MASK;
 }
 
+/* observed values from a 1764 REU with 256k */
+static RAMINITPARAM reuramparam = {
+    .start_value = 255,
+    .value_invert = 2,
+    .value_offset = 1,
+
+    .pattern_invert = 0x100,
+    .pattern_invert_value = 255,
+
+    .random_start = 0,
+    .random_repeat = 0,
+    .random_chance = 0,
+};
+
+static void invertblock(unsigned int addr, unsigned int len)
+{
+    unsigned int end = addr + len;
+    while (addr < end) {
+        if (addr >= reu_size) {
+            return;
+        }
+        reu_ram[addr] ^= 0xff;
+        addr++;
+    }
+}
+
+static void reu_init_ram(void)
+{
+    unsigned int b, i;
+    DEBUG_LOG(DEBUG_LEVEL_REGISTER, (reu_log, "reu_init_ram"));
+    if (reu_ram) {
+        ram_init_with_pattern(reu_ram, reu_size, &reuramparam);
+        /* apply additional slightly odd invert pattern, observed by x1541 */
+        for (b = 0; b < (reu_size >> 16); b += 4) {
+            for (i = 0; i < 2; i++) {
+                invertblock(0x002a00 + ((i + b) << 16), 0x2a00);
+                invertblock(0x008000 + ((i + b) << 16), 0x2c00);
+                invertblock(0x00d600 + ((i + b) << 16), 0x2a00);
+            }
+            for (i = 0; i < 2; i++) {
+                invertblock(0x020000 + ((i + b) << 16), 0x2a00);
+                invertblock(0x025400 + ((i + b) << 16), 0x2c00);
+                invertblock(0x02ac00 + ((i + b) << 16), 0x2a00);
+            }
+        }
+    }
+}
+
+void reu_powerup(void)
+{
+    DEBUG_LOG(DEBUG_LEVEL_REGISTER, (reu_log, "reu_powerup"));
+    if ((reu_filename != NULL) && (*reu_filename != 0)) {
+        /* do not init ram if a file is used for ram content (like battery backup) */
+        return;
+    }
+    reu_init_ram();
+}
+
 static int reu_activate(void)
 {
+    DEBUG_LOG(DEBUG_LEVEL_REGISTER, (reu_log, "reu_activate"));
     if (!reu_size) {
         return 0;
     }
@@ -616,13 +683,11 @@ static int reu_activate(void)
     reu_ram = lib_realloc(reu_ram, reu_size);
 
     /* Clear newly allocated RAM.  */
-    if (reu_size > old_reu_ram_size) {
-        memset(reu_ram, 0, (size_t)(reu_size - old_reu_ram_size));
-    }
+    reu_init_ram();
 
     old_reu_ram_size = reu_size;
 
-    log_message(reu_log, "%dKB unit installed.", reu_size >> 10);
+    log_message(reu_log, "%uKiB unit installed.", reu_size >> 10);
 
     if (!util_check_null_string(reu_filename)) {
         if (util_file_load(reu_filename, reu_ram, (size_t)reu_size, UTIL_FILE_LOAD_RAW) < 0) {
@@ -659,6 +724,10 @@ static int reu_deactivate(void)
         }
     }
 
+#ifdef __LIBRETRO__
+    log_message(reu_log, "REU unit uninstalled.");
+#endif
+
     lib_free(reu_ram);
     reu_ram = NULL;
     old_reu_ram_size = 0;
@@ -690,16 +759,20 @@ int reu_disable(void)
 int reu_bin_attach(const char *filename, uint8_t *rawcart)
 {
     FILE *fd;
-    int size;
+    off_t size;
 
     fd = fopen(filename, MODE_READ);
     if (fd == NULL) {
         return -1;
     }
-    size = util_file_length(fd);
+    size = archdep_file_size(fd);
+    if (size < 0) {
+        fclose(fd);
+        return -1;
+    }
     fclose(fd);
 
-    if (set_reu_size(size / 1024, NULL) < 0) {
+    if (set_reu_size((uint32_t)size / 1024, NULL) < 0) {
         return -1;
     }
 
@@ -707,7 +780,7 @@ int reu_bin_attach(const char *filename, uint8_t *rawcart)
         return -1;
     }
 
-    if (util_file_load(filename, rawcart, size, UTIL_FILE_LOAD_SKIP_ADDRESS) < 0) {
+    if (util_file_load(filename, rawcart, (size_t)size, UTIL_FILE_LOAD_SKIP_ADDRESS) < 0) {
         return -1;
     }
 
@@ -743,7 +816,7 @@ int reu_flush_image(void)
 /* helper functions */
 
 /*! \brief clock handling for x64 */
-inline static void reu_clk_inc_pre(void)
+inline static void nonsc_reu_clk_inc_pre(void)
 {
     if (!reu_ba.enabled) {
         maincpu_clk++;
@@ -751,11 +824,15 @@ inline static void reu_clk_inc_pre(void)
 }
 
 /*! \brief clock handling for x64sc reu write */
-inline static void reu_clk_inc_post(void)
+inline static void reu_clk_inc_post_write(void)
 {
     if (reu_ba.enabled) {
         maincpu_clk++;
-        if (reu_ba.check()) reu_ba.delay++; else reu_ba.delay = 0;
+        if (reu_ba.check()) {
+            reu_ba.delay++;
+        } else {
+            reu_ba.delay = 0;
+        }
         reu_ba.last_cycle = (reu_ba.delay > 1);
         if (reu_ba.last_cycle) {
             reu_ba.steal();
@@ -765,10 +842,12 @@ inline static void reu_clk_inc_post(void)
 }
 
 /*! \brief clock handling for x64sc reu read */
-inline static void reu_clk_inc_post2(void)
+inline static void reu_clk_inc_post_read(void)
 {
     if (reu_ba.enabled) {
+        /* add one cycle */
         maincpu_clk++;
+        /* steal more cycles while BA is pulled low by the VICII */
         if (reu_ba.check()) {
             reu_ba.steal();
         }
@@ -1014,7 +1093,6 @@ inline static unsigned int increment_reu_with_wrap_around(unsigned int reu_addr,
     if (next == rec_options.wrap_around) {
         next = 0;
     }
-
     return (reu_addr & 0x00f80000) | next;
 }
 
@@ -1062,16 +1140,17 @@ inline static void store_to_reu(unsigned int reu_addr, uint8_t value)
 */
 inline static uint8_t read_from_reu(unsigned int reu_addr)
 {
-    uint8_t value = 0xff; /* dummy value to return if not DRAM is available */
+    uint8_t value;
 
     reu_addr &= rec_options.dram_wrap_around - 1;
     if (reu_addr < rec_options.not_backedup_addresses) {
+        /* this is a valid read */
         assert(reu_addr < reu_size);
         value = reu_ram[reu_addr];
     } else {
         DEBUG_LOG(DEBUG_LEVEL_NO_DRAM, (reu_log, "--> read from REU address %05X, but no DRAM!", reu_addr));
+        value = floating_bus_value;
     }
-
     return value;
 }
 
@@ -1175,10 +1254,10 @@ static void reu_dma_host_to_reu(uint16_t host_addr, unsigned int reu_addr, int h
     assert(len >= 1);
 
     while (len) {
-        reu_clk_inc_pre();
+        nonsc_reu_clk_inc_pre();
         machine_handle_pending_alarms(0);
-        value = mem_read(host_addr);
-        reu_clk_inc_post2();
+        value = mem_dma_read(host_addr);
+        reu_clk_inc_post_read();
         DEBUG_LOG(DEBUG_LEVEL_TRANSFER_LOW_LEVEL, (reu_log, "Transferring byte: %x from main $%04X to ext $%05X.", value, host_addr, reu_addr));
 
         store_to_reu(reu_addr, value);
@@ -1188,6 +1267,8 @@ static void reu_dma_host_to_reu(uint16_t host_addr, unsigned int reu_addr, int h
     }
     DEBUG_LOG(DEBUG_LEVEL_REGISTER2, (reu_log, "END OF BLOCK"));
     reu_dma_update_regs(host_addr, reu_addr, ++len, REU_REG_R_STATUS_END_OF_BLOCK);
+    /* the last value written to the REU will stay in the latch that drives the bus */
+    floating_bus_value = value;
 }
 
 /*! \brief DMA operation writing from the REU to the host
@@ -1219,10 +1300,12 @@ static void reu_dma_reu_to_host(uint16_t host_addr, unsigned int reu_addr, int h
 
     while (len) {
         DEBUG_LOG(DEBUG_LEVEL_TRANSFER_LOW_LEVEL, (reu_log, "Transferring byte: %x from ext $%05X to main $%04X.", reu_ram[reu_addr % reu_size], reu_addr, host_addr));
-        reu_clk_inc_pre();
-        value = read_from_reu(reu_addr);
-        mem_store(host_addr, value);
-        reu_clk_inc_post();
+        nonsc_reu_clk_inc_pre();
+        /* after a transfer from REU to host, the last (pre)fetched value from valid
+           REU RAM stays in the latch that drives the bus. see comment below. */
+        floating_bus_value = value = read_from_reu(reu_addr);
+        mem_dma_store(host_addr, value);
+        reu_clk_inc_post_write();
         machine_handle_pending_alarms(0);
         host_addr = (host_addr + host_step) & 0xffff;
         reu_addr = increment_reu_with_wrap_around(reu_addr, reu_step);
@@ -1230,10 +1313,15 @@ static void reu_dma_reu_to_host(uint16_t host_addr, unsigned int reu_addr, int h
     }
     if (reu_ba.enabled && reu_ba.last_cycle) { /* extra cycle if ended while BA set */
        machine_handle_pending_alarms(0);
-       reu_clk_inc_post2();
+       reu_clk_inc_post_read();
     }
     DEBUG_LOG(DEBUG_LEVEL_REGISTER2, (reu_log, "END OF BLOCK"));
     reu_dma_update_regs(host_addr, reu_addr, ++len, REU_REG_R_STATUS_END_OF_BLOCK);
+    /* after a transfer from REU to host, the last (pre)fetched value from valid
+       REU RAM stays in the latch that drives the bus. we can use read_from_reu()
+       here without an additional check, since it checks for the valid range
+       internally and will return the latched value for invalid addresses. */
+    floating_bus_value = read_from_reu(reu_addr);
 }
 
 /*! \brief DMA operation swaping data between host and REU
@@ -1266,15 +1354,15 @@ static void reu_dma_swap(uint16_t host_addr, unsigned int reu_addr, int host_ste
 
     while (len) {
         value_from_reu = read_from_reu(reu_addr);
-        reu_clk_inc_pre();
+        nonsc_reu_clk_inc_pre();
         machine_handle_pending_alarms(0);
-        value_from_c64 = mem_read(host_addr);
-        reu_clk_inc_post2();
+        value_from_c64 = mem_dma_read(host_addr);
+        reu_clk_inc_post_read();
         DEBUG_LOG(DEBUG_LEVEL_TRANSFER_LOW_LEVEL, (reu_log, "Exchanging bytes: %x from main $%04X with %x from ext $%05X.", value_from_c64, host_addr, value_from_reu, reu_addr));
         store_to_reu(reu_addr, value_from_c64);
-        mem_store(host_addr, value_from_reu);
-        reu_clk_inc_pre();
-        reu_clk_inc_post();
+        mem_dma_store(host_addr, value_from_reu);
+        nonsc_reu_clk_inc_pre();
+        reu_clk_inc_post_write();
         machine_handle_pending_alarms(0);
         host_addr = (host_addr + host_step) & 0xffff;
         reu_addr = increment_reu_with_wrap_around(reu_addr, reu_step);
@@ -1282,7 +1370,7 @@ static void reu_dma_swap(uint16_t host_addr, unsigned int reu_addr, int host_ste
     }
     if (reu_ba.enabled && reu_ba.last_cycle) { /* extra cycle if ended while BA set */
        machine_handle_pending_alarms(0);       /* likely needed, but not confirmed yet */
-       reu_clk_inc_post2();
+       reu_clk_inc_post_read();
     }
     DEBUG_LOG(DEBUG_LEVEL_REGISTER2, (reu_log, "END OF BLOCK"));
     reu_dma_update_regs(host_addr, reu_addr, ++len, REU_REG_R_STATUS_END_OF_BLOCK);
@@ -1325,11 +1413,11 @@ static void reu_dma_compare(uint16_t host_addr, unsigned int reu_addr, int host_
     /* rec.status &= ~ (REU_REG_R_STATUS_VERIFY_ERROR | REU_REG_R_STATUS_END_OF_BLOCK); */
 
     while (len) {
-        reu_clk_inc_pre();
+        nonsc_reu_clk_inc_pre();
         machine_handle_pending_alarms(0);
         value_from_reu = read_from_reu(reu_addr);
-        value_from_c64 = mem_read(host_addr);
-        reu_clk_inc_post2();
+        value_from_c64 = mem_dma_read(host_addr);
+        reu_clk_inc_post_read();
         DEBUG_LOG(DEBUG_LEVEL_TRANSFER_LOW_LEVEL, (reu_log, "Comparing bytes: %x from main $%04X with %x from ext $%05X.", value_from_c64, host_addr, value_from_reu, reu_addr));
         reu_addr = increment_reu_with_wrap_around(reu_addr, reu_step);
         host_addr = (host_addr + host_step) & 0xffff;
@@ -1344,9 +1432,9 @@ static void reu_dma_compare(uint16_t host_addr, unsigned int reu_addr, int host_
              * the failed comparison happened on the last byte of the buffer.
              */
             if (len >= 1) {
-                reu_clk_inc_pre();
+                nonsc_reu_clk_inc_pre();
                 machine_handle_pending_alarms(0);
-                reu_clk_inc_post2();
+                reu_clk_inc_post_read();
             }
             break;
         }
@@ -1368,7 +1456,7 @@ static void reu_dma_compare(uint16_t host_addr, unsigned int reu_addr, int host_
          */
 
         value_from_reu = read_from_reu(reu_addr);
-        value_from_c64 = mem_read(host_addr);
+        value_from_c64 = mem_dma_read(host_addr);
         DEBUG_LOG(DEBUG_LEVEL_TRANSFER_LOW_LEVEL, (reu_log, "Comparing bytes after verify error: %x from main $%04X with %x from ext $%05X.",
                                                    value_from_c64, host_addr, value_from_reu, reu_addr));
         if (value_from_reu == value_from_c64) {
@@ -1404,32 +1492,36 @@ static void reu_dma_compare(uint16_t host_addr, unsigned int reu_addr, int host_
    If it has been previously armed (with immediate == 0), then the DMA operation is
    executed.
 */
-void reu_dma(int immediate)
+int reu_dma(int immediate)
 {
     static int delay = 0;
 
     if (!reu_enabled) {
-        return;
+        return 0;
     }
 
     if (!immediate) {
         delay = 1;
-        return;
+        return 0;
     } else {
         if (!delay && immediate < 0) {
-            return;
+            return 0;
         }
         delay = 0;
     }
 
     if (reu_ba.enabled) {
+        /* REU DMA on x64sc */
         /* signal CPU that BA is pulled low */
         *(reu_ba.cpu_ba) |= reu_ba.cpu_ba_mask;
         reu_ba.delay = 0; reu_ba.last_cycle = 0;
     } else {
+        /* REU DMA on x64 */
         /* start the operation right away */
         reu_dma_start();
     }
+
+    return 1;
 }
 
 void reu_dma_start(void)
@@ -1480,7 +1572,7 @@ void reu_dma_start(void)
    ARRAY | RAM       | 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608 or 16777216 BYTES of RAM data
  */
 
-static char snap_module_name[] = "REU1764"; /*!< the name of the module for the snapshot */
+static const char snap_module_name[] = "REU1764"; /*!< the name of the module for the snapshot */
 #define SNAP_MAJOR 0 /*!< version number for this module, major number */
 #define SNAP_MINOR 0 /*!< version number for this module, minor number */
 
@@ -1553,7 +1645,7 @@ int reu_read_snapshot_module(snapshot_t *s)
     }
 
     /* Do not accept versions higher than current */
-    if (major_version > SNAP_MAJOR || minor_version > SNAP_MINOR) {
+    if (snapshot_version_is_bigger(major_version, minor_version, SNAP_MAJOR, SNAP_MINOR)) {
         snapshot_set_error(SNAPSHOT_MODULE_HIGHER_VERSION);
         goto fail;
     }

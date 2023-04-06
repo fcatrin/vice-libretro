@@ -174,7 +174,7 @@ void shortbus_reset(void)
    BYTE  | eth64 active   | eth64 active flag
  */
 
-static char snap_module_name[] = "SHORTBUS";
+static const char snap_module_name[] = "SHORTBUS";
 #define SNAP_MAJOR 0
 #define SNAP_MINOR 0
 
@@ -272,7 +272,7 @@ int shortbus_read_snapshot_module(snapshot_t *s)
     }
 
     /* Do not accept versions higher than current */
-    if (major_version > SNAP_MAJOR || minor_version > SNAP_MINOR) {
+    if (snapshot_version_is_bigger(major_version, minor_version, SNAP_MAJOR, SNAP_MINOR)) {
         snapshot_set_error(SNAPSHOT_MODULE_HIGHER_VERSION);
         goto fail;
     }
@@ -292,14 +292,14 @@ int shortbus_read_snapshot_module(snapshot_t *s)
         if (devices[0]) {
             if (shortbus_digimax_read_snapshot_module(s) < 0) {
                 return -1;
-            }        
+            }
         }
 
 #ifdef HAVE_RAWNET
         if (devices[2]) {
             if (shortbus_etfe_read_snapshot_module(s) < 0) {
                 return -1;
-            }        
+            }
         }
 #endif
 
@@ -308,12 +308,12 @@ int shortbus_read_snapshot_module(snapshot_t *s)
         if (devices[1]) {
             if (shortbus_duart_read_snapshot_module(s) < 0) {
                 return -1;
-            }        
+            }
         }
         if (devices[3]) {
             if (shortbus_eth64_read_snapshot_module(s) < 0) {
                 return -1;
-            }        
+            }
         }
 #endif
     }

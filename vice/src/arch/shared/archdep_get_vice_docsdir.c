@@ -1,4 +1,4 @@
-/** \file   archdep_vice_get_docsdir.c
+/** \file   archdep_get_vice_docsdir.c
  * \brief   Get path to VICE doc/ dir
  * \author  Bas Wassink <b.wassink@ziggo.nl>
  */
@@ -25,13 +25,14 @@
  */
 
 #include "vice.h"
+#include "archdep_defs.h"
 
 #include <stdlib.h>
 
-#include "archdep_defs.h"
-#include "lib.h"
 #include "archdep_boot_path.h"
-#include "archdep_join_paths.h"
+#include "archdep_is_macos_bindist.h"
+#include "lib.h"
+#include "util.h"
 
 #include "archdep_get_vice_docsdir.h"
 
@@ -42,18 +43,22 @@
  */
 char *archdep_get_vice_docsdir(void)
 {
-    char *path;
-
-#ifdef ARCHDEP_OS_UNIX
-# ifdef MACOSX_BUNDLE
-    /*    debug_gtk3("FIXME: MACOSX: archdep_get_vice_docsdir '%s%s'.",
-            archdep_boot_path(), "/../doc/"); */
-    path = archdep_join_paths(archdep_boot_path(), "..", "doc", NULL);
+#ifdef WINDOWS_COMPILE
+    /* Cannot use VICE_DOCDIR here since Windows installs assume any file to
+     * be relative to the emu binary.
+     */
+# if defined(USE_SDLUI) || defined(USE_SDL2UI)
+    return util_join_paths(archdep_boot_path(), "doc", NULL);
 # else
-    path = lib_stralloc(DOCDIR);
+    return util_join_paths(archdep_boot_path(), "..", "doc", NULL);
 # endif
+#elif defined(MACOS_COMPILE)
+    if (archdep_is_macos_bindist()) {
+        return util_join_paths(archdep_boot_path(), "..", "share", "vice", "doc", NULL);
+    } else {
+        return lib_strdup(VICE_DOCDIR);
+    }
 #else
-    path = archdep_join_paths(archdep_boot_path(), "doc", NULL);
+    return lib_strdup(VICE_DOCDIR);
 #endif
-    return path;
 }

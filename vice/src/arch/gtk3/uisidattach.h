@@ -27,11 +27,7 @@
 #ifndef VICE_UISIDATTACH_H
 #define VICE_UISIDATTACH_H
 
-#include "vice.h"
-#include <gtk/gtk.h>
-
-void uisidattach_show_dialog(GtkWidget *widget, gpointer data);
-
+void uisidattach_show_dialog(void);
 void uisidattach_shutdown(void);
 
 #endif

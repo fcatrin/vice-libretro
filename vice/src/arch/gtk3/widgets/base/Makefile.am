@@ -2,7 +2,9 @@
 
 
 AM_CPPFLAGS = \
+	@VICE_CPPFLAGS@ \
 	@ARCH_INCLUDES@ \
+	-I$(top_srcdir)/src/arch/shared \
 	-I$(top_builddir)/src \
 	-I$(top_srcdir)/src \
 	-I$(top_srcdir)/src/drive \
@@ -23,6 +25,13 @@ AM_CPPFLAGS = \
 	-I$(top_srcdir)/src/userport \
 	-I$(top_srcdir)/src/c64/cart
 
+AM_CFLAGS = @VICE_CFLAGS@
+
+AM_CXXFLAGS = @VICE_CXXFLAGS@
+
+AM_LDFLAGS = @VICE_LDFLAGS@
+
+
 noinst_LIBRARIES = libbasewidgets.a
 
 libbasewidgets_a_SOURCES = \
@@ -30,21 +39,24 @@ libbasewidgets_a_SOURCES = \
 	carthelpers.c \
 	cartimagewidget.c \
 	clockportdevicewidget.c \
+	csshelpers.c \
 	filechooserhelpers.c \
 	lastdir.c \
 	openfiledialog.c \
+	popupmenu.c \
 	resourcebrowser.c \
 	resourcecheckbutton.c \
 	resourcecombobox.c \
 	resourceentry.c \
 	resourcehelpers.c \
+	resourcenumericstring.c \
 	resourceradiogroup.c \
 	resourcescale.c \
 	resourcespinbutton.c \
 	resourceswitch.c \
-	resourcewidgetmanager.c \
 	savefiledialog.c \
 	selectdirectorydialog.c \
+	uiactionbutton.c \
 	widgethelpers.c
 
 EXTRA_DIST = \
@@ -54,21 +66,24 @@ EXTRA_DIST = \
 	carthelpers.h \
 	cartimagewidget.h \
 	clockportdevicewidget.h \
+	csshelpers.h \
 	filechooserhelpers.h \
 	lastdir.h \
 	openfiledialog.h \
+	popupmenu.h \
 	resourcebrowser.h \
 	resourcecheckbutton.h \
 	resourcecombobox.h \
 	resourceentry.h \
 	resourcehelpers.h \
+	resourcenumericstring.h \
 	resourceradiogroup.h \
 	resourcescale.h \
 	resourcespinbutton.h \
 	resourceswitch.h \
-	resourcewidgetmanager.h \
 	savefiledialog.h \
 	selectdirectorydialog.h \
+	uiactionbutton.h \
 	vice_gtk3.h \
 	vice_gtk3_settings.h \
 	widgethelpers.h

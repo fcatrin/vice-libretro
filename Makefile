@@ -7,13 +7,13 @@ OBJECTS     :=
 
 ifeq ($(platform),)
 platform = unix
-ifeq ($(shell uname -a),)
+ifeq ($(shell uname -s),)
    platform = win
-else ifneq ($(findstring MINGW,$(shell uname -a)),)
+else ifneq ($(findstring MINGW,$(shell uname -s)),)
    platform = win
-else ifneq ($(findstring Darwin,$(shell uname -a)),)
+else ifneq ($(findstring Darwin,$(shell uname -s)),)
    platform = osx
-else ifneq ($(findstring win,$(shell uname -a)),)
+else ifneq ($(findstring win,$(shell uname -s)),)
    platform = win
 endif
 endif
@@ -26,20 +26,37 @@ TARGET_NAME := vice_$(EMUTYPE)
 
 # system platform
 system_platform = unix
-ifeq ($(shell uname -a),)
+ifeq ($(shell uname -s),)
    EXE_EXT = .exe
    system_platform = win
-else ifneq ($(findstring Darwin,$(shell uname -a)),)
+else ifneq ($(findstring Darwin,$(shell uname -s)),)
    system_platform = osx
-else ifneq ($(findstring MINGW,$(shell uname -a)),)
+   arch = intel
+   ifeq ($(shell uname -p),powerpc)
+	arch = ppc
+   endif
+   ifeq ($(shell uname -p),arm)
+	arch = arm
+   endif
+else ifneq ($(findstring MINGW,$(shell uname -s)),)
    system_platform = win
 endif
 
 # Unix
 ifeq ($(platform), unix)
    TARGET := $(TARGET_NAME)_libretro.so
-   LDFLAGS += -shared -Wl,--version-script=$(CORE_DIR)/libretro/link.T
+   LDFLAGS += -shared -Wl,--version-script=$(CORE_DIR)/libretro/link.T -Wl,--gc-sections
    fpic = -fPIC
+
+# Raspberry Pi 4
+else ifneq (,$(findstring rpi4,$(platform)))
+   TARGET := $(TARGET_NAME)_libretro.so
+   fpic := -fPIC
+   SHARED := -shared -Wl,--no-undefined
+   LDFLAGS += -shared -Wl,--version-script=$(CORE_DIR)/libretro/link.T
+   CFLAGS += -march=armv8-a+crc+simd -mcpu=cortex-a72
+   CFLAGS += -DARM -DALIGN_DWORD
+   CXXFLAGS += $(CFLAGS)
 
 # CrossPI
 else ifeq ($(platform), crosspi)
@@ -56,14 +73,13 @@ else ifeq ($(platform), crosspi)
 
 # Classic Platforms ####################
 # Platform affix = classic_<ISA>_<µARCH>
-# Help at https://modmyclassic.com/comp
 
 # (armv7 a7, hard point, neon based) ###
 # NESC, SNESC, C64 mini
 else ifeq ($(platform), classic_armv7_a7)
    TARGET := $(TARGET_NAME)_libretro.so
    fpic := -fPIC
-   LDFLAGS := -shared -Wl,--version-script=$(CORE_DIR)/libretro/link.T  -Wl,--no-undefined
+   LDFLAGS := -shared -Wl,--version-script=$(CORE_DIR)/libretro/link.T -Wl,--no-undefined
    CFLAGS += -DARM -Ofast \
 	-flto=4 -fwhole-program -fuse-linker-plugin \
 	-fdata-sections -ffunction-sections -Wl,--gc-sections \
@@ -90,7 +106,7 @@ else ifeq ($(platform), classic_armv7_a7)
 else ifeq ($(platform), classic_armv8_a35)
    TARGET := $(TARGET_NAME)_libretro.so
    fpic := -fPIC
-   LDFLAGS := -shared -Wl,--version-script=$(CORE_DIR)/libretro/link.T  -Wl,--no-undefined
+   LDFLAGS := -shared -Wl,--version-script=$(CORE_DIR)/libretro/link.T -Wl,--no-undefined
    CFLAGS += -DARM -Ofast \
 	-flto=4 -fwhole-program -fuse-linker-plugin \
 	-fdata-sections -ffunction-sections -Wl,--gc-sections \
@@ -104,8 +120,8 @@ else ifeq ($(platform), classic_armv8_a35)
    ASFLAGS += $(CFLAGS)
    CFLAGS += -march=armv8-a
    LDFLAGS += -static-libgcc -static-libstdc++
-
 #######################################
+
 # CTR (3DS)
 else ifeq ($(platform), ctr)
    TARGET := $(TARGET_NAME)_libretro_$(platform).a
@@ -113,7 +129,7 @@ else ifeq ($(platform), ctr)
    CXX = $(DEVKITARM)/bin/arm-none-eabi-g++$(EXE_EXT)
    AR = $(DEVKITARM)/bin/arm-none-eabi-ar$(EXE_EXT)
    DEFINES += -D_3DS -DARM11 -march=armv6k -mtune=mpcore -mfloat-abi=hard
-   CFLAGS += $(DEFINES)
+   CFLAGS += $(DEFINES) -I$(CTRULIB)/include
    CXXFLAGS += $(CFLAGS)
    STATIC_LINKING = 1
 
@@ -124,7 +140,7 @@ else ifeq ($(platform), libnx)
    CFLAGS += -O3 -fomit-frame-pointer -ffast-math -I$(DEVKITPRO)/libnx/include/ -Wl,--allow-multiple-definition
    CFLAGS += -specs=$(DEVKITPRO)/libnx/switch.specs
    CFLAGS += -D__SWITCH__ -DHAVE_LIBNX -DHAVE_GETPWUID=0 -DHAVE_GETCWD=1
-   CFLAGS += -march=armv8-a -mtune=cortex-a57 -mtp=soft -ffast-math -mcpu=cortex-a57+crc+fp+simd -ffunction-sections
+   CFLAGS += -march=armv8-a -mtune=cortex-a57 -mtp=soft -ffast-math -mcpu=cortex-a57+crc+fp+simd -ffunction-sections -fcommon
    CFLAGS += -Ifrontend/switch -ftree-vectorize
    CXXFLAGS += $(CFLAGS)
    fpic = -fPIE
@@ -135,24 +151,36 @@ else ifeq ($(platform), osx)
    TARGET := $(TARGET_NAME)_libretro.dylib
    LDFLAGS += -dynamiclib
    fpic = -fPIC
+   MINVERSION :=
    ifeq ($(arch),ppc)
       COMMONFLAGS += -DBLARGG_BIG_ENDIAN=1 -D__ppc__
+      OSX_LT_MAVERICKS = YES
+   else
+      OSXVER = `sw_vers -productVersion | cut -d. -f 2`
+      OSX_LT_MAVERICKS = `(( $(OSXVER) <= 9)) && echo "YES"`
    endif
-   OSXVER = `sw_vers -productVersion | cut -d. -f 2`
-   OSX_LT_MAVERICKS = `(( $(OSXVER) <= 9)) && echo "YES"`
-   fpic += -mmacosx-version-min=10.1
+ifeq ($(OSX_LT_MAVERICKS),YES)
+   MINVERSION = -mmacosx-version-min=10.4
+else
+   fpic += -stdlib=libc++
+endif
+   fpic += $(MINVERSION)
    CFLAGS += -DHAVE_STRLCPY -DHAVE_VSNPRINTF -DHAVE_SNPRINTF -DHAVE_STPCPY -D_INTTYPES_H
    CXXFLAGS += -DHAVE_STRLCPY -DHAVE_VSNPRINTF -DHAVE_SNPRINTF -DHAVE_STPCPY -D_INTTYPES_H
-   ifndef ($(UNIVERSAL))
-      CFLAGS += $(ARCHFLAGS)
-      CXXFLAGS += $(ARCHFLAGS)
-      LDFLAGS += $(ARCHFLAGS)
+
+   CFLAGS += -std=gnu99
+   ifeq ($(CROSS_COMPILE),1)
+	TARGET_RULE   = -target $(LIBRETRO_APPLE_PLATFORM) -isysroot $(LIBRETRO_APPLE_ISYSROOT)
+	CFLAGS     += $(TARGET_RULE)
+	CXXFLAGS   += $(TARGET_RULE)
+	LDFLAGS    += $(TARGET_RULE)
    endif
 
 # iOS
 else ifneq (,$(findstring ios,$(platform)))
    TARGET := $(TARGET_NAME)_libretro_ios.dylib
    COMMONFLAGS += -DHAVE_POSIX_MEMALIGN=1 -marm
+   MINVERSION :=
    fpic = -fPIC
    LDFLAGS += -dynamiclib
    ifeq ($(IOSSDK),)
@@ -171,9 +199,9 @@ else ifneq (,$(findstring ios,$(platform)))
    OSXVER = `sw_vers -productVersion | cut -d. -f 2`
    OSX_LT_MAVERICKS = `(( $(OSXVER) <= 9)) && echo "YES"`
    ifeq ($(OSX_LT_MAVERICKS),"YES")
-      CC += -miphoneos-version-min=5.0
-      COMMONFLAGS += -miphoneos-version-min=5.0
+      MINVERSION = -miphoneos-version-min=5.0
    endif
+   COMMONFLAGS += $(MINVERSION)
 
 else ifeq ($(platform), tvos-arm64)
    TARGET := $(TARGET_NAME)_libretro_tvos.dylib
@@ -183,9 +211,11 @@ else ifeq ($(platform), tvos-arm64)
    ifeq ($(IOSSDK),)
       IOSSDK := $(shell xcodebuild -version -sdk appletvos Path)
    endif
-   COMMONFLAGS += -DIOS
-   CFLAGS += -DHAVE_STRLCPY -DHAVE_VSNPRINTF -DHAVE_SNPRINTF -DHAVE_STPCPY -D_INTTYPES_H
-   CXXFLAGS += -DHAVE_STRLCPY -DHAVE_VSNPRINTF -DHAVE_SNPRINTF -DHAVE_STPCPY -D_INTTYPES_H
+   COMMONFLAGS += -DIOS -DHAVE_STRLCPY -DHAVE_VSNPRINTF -DHAVE_SNPRINTF -DHAVE_STPCPY -D_INTTYPES_H
+   CFLAGS   += $(COMMONFLAGS)
+   CXXFLAGS += $(COMMONFLAGS)
+   CC = clang -arch arm64 -isysroot $(IOSSDK)
+   CXX = clang++ -arch arm64 -isysroot $(IOSSDK)
 
 else ifeq ($(platform), theos_ios)
    DEPLOYMENT_IOSVERSION = 5.0
@@ -207,7 +237,7 @@ else ifeq ($(platform), qnx)
    CC_AS = qcc -Vgcc_ntoarmv7le
    CXX = QCC -Vgcc_ntoarmv7le_cpp
    AR = QCC -Vgcc_ntoarmv7le
-   PLATFORM_DEFINES := -D__BLACKBERRY_QNX__ -fexceptions -marm -mcpu=cortex-a9 -mfpu=neon -mfloat-abi=softfp
+   COMMONFLAGS += -D__BLACKBERRY_QNX__ -fexceptions -marm -mcpu=cortex-a9 -mfpu=neon -mfloat-abi=softfp
    CFLAGS += -std=gnu99
 
 # ANDROID STANDALONE TOOLCHAIN
@@ -216,7 +246,7 @@ else ifeq ($(platform), androidstc)
    CC = arm-linux-androideabi-gcc
    CXX = arm-linux-androideabi-g++
    LDFLAGS += -lstdc++ -llog -shared -Wl,--version-script=$(CORE_DIR)/libretro/link.T -Wl,--no-undefined
-   CFLAGS += -DHAVE_GETCWD=1 -DHAVE_MEMMOVE=1 -DHAVE_ATEXIT=1 -DARM -DALIGN_DWORD -mstructure-size-boundary=32 -mthumb-interwork -falign-functions=16 -marm
+   CFLAGS += -DHAVE_GETCWD=1 -DHAVE_MEMMOVE=1 -DHAVE_ATEXIT=1 -DARM -DALIGN_DWORD -DANDROID -mstructure-size-boundary=32 -mthumb-interwork -falign-functions=16 -marm
    CFLAGS += -O2 -pipe -fstack-protector
    CXXFLAGS += $(CFLAGS)
    fpic = -fPIC
@@ -268,7 +298,7 @@ else ifeq ($(platform), vita)
    CXX = arm-vita-eabi-g++$(EXE_EXT)
    AR = arm-vita-eabi-ar$(EXE_EXT)
    COMMONFLAGS += -U__INT32_TYPE__ -U __UINT32_TYPE__ -D__INT32_TYPE__=int
-   COMMONFLAGS += -DHAVE_STRTOUL -DVITA
+   COMMONFLAGS += -DHAVE_STRTOUL -DVITA -fcommon
    STATIC_LINKING = 1
 
 # Emscripten
@@ -299,26 +329,32 @@ else ifeq ($(platform), wiiu)
    COMMONFLAGS += -DHAVE_STRTOUL -DWIIU
    STATIC_LINKING = 1
 
-# PS3
-else ifeq ($(platform), ps3)
-   TARGET := $(TARGET_NAME)_libretro_$(platform).a
-   CC      = $(CELL_SDK)/host-win32/ppu/bin/ppu-lv2-gcc.exe
-   CXX     = $(CELL_SDK)/host-win32/ppu/bin/ppu-lv2-g++.exe
-   AR      = $(CELL_SDK)/host-win32/ppu/bin/ppu-lv2-ar.exe
-   OLD_GCC := 1
-   COMMONFLAGS += -DHAVE_STRTOUL
-   STATIC_LINKING = 1
-
 # Lightweight PS3 Homebrew SDK
-else ifeq ($(platform), psl1ght)
+else ifneq (,$(filter $(platform), ps3 psl1ght))
    TARGET := $(TARGET_NAME)_libretro_$(platform).a
-   CC = $(PS3DEV)/ppu/bin/ppu-gcc$(EXE_EXT)
-   CXX = $(PS3DEV)/ppu/bin/ppu-g++$(EXE_EXT)
-   CC_AS = $(PS3DEV)/ppu/bin/ppu-gcc$(EXE_EXT)
-   AR = $(PS3DEV)/ppu/bin/ppu-ar$(EXE_EXT)
+   CC = $(PS3DEV)/ppu/bin/ppu-$(COMMONLV)gcc$(EXE_EXT)
+   CXX = $(PS3DEV)/ppu/bin/ppu-$(COMMONLV)g++$(EXE_EXT)
+   CC_AS = $(PS3DEV)/ppu/bin/ppu-$(COMMONLV)gcc$(EXE_EXT)
+   AR = $(PS3DEV)/ppu/bin/ppu-$(COMMONLV)ar$(EXE_EXT)
    OLD_GCC := 1
-   COMMONFLAGS += -DHAVE_STRTOUL -D__PSL1GHT__
-   STATIC_LINKING = 1
+   COMMONFLAGS += -D__POWERPC__ -D__ppc__ -D__PS3__ -DWORDS_BIGENDIAN=1 -D__unix__ -DHAVE_STRTOUL -D_NO_CPP_INLINES
+   ifeq ($(platform), psl1ght)
+       COMMONFLAGS += -D__PSL1GHT__
+   endif
+   STATIC_LINKING = 0
+
+# GCW0
+else ifeq ($(platform), gcw0)
+   TARGET := $(TARGET_NAME)_libretro.so
+   CC = /opt/gcw0-toolchain/usr/bin/mipsel-linux-gcc
+   CXX = /opt/gcw0-toolchain/usr/bin/mipsel-linux-g++
+   AR = /opt/gcw0-toolchain/usr/bin/mipsel-linux-ar
+   LDFLAGS += -shared -Wl,--version-script=$(CORE_DIR)/libretro/link.T
+   fpic := -fPIC
+   OLD_GCC := 1
+   COMMONFLAGS += -DDINGUX -fomit-frame-pointer -ffast-math -march=mips32 -mtune=mips32r2 -mhard-float
+   COMMONFLAGS += -DHAVE_SYS_TYPES_H -D_BSD_SOURCE -D_POSIX_C_SOURCE=200809L
+   CFLAGS += -std=c99
 
 # ARM
 else ifneq (,$(findstring armv,$(platform)))
@@ -335,23 +371,23 @@ else ifneq (,$(findstring armv,$(platform)))
    else ifneq (,$(findstring hardfloat,$(platform)))
       CFLAGS += -mfloat-abi=hard
    endif
-   CFLAGS += -DARM -marm -DALIGN_DWORD -mstructure-size-boundary=32 -mthumb-interwork -falign-functions=16 -pipe -fstack-protector
+   CFLAGS += -DARM -marm -DALIGN_DWORD -mthumb-interwork -falign-functions=16 -pipe -fstack-protector
 
 # Wincross64
 else ifeq ($(platform), wincross64)
    AR = x86_64-w64-mingw32-ar
    CC = x86_64-w64-mingw32-gcc
    CXX = x86_64-w64-mingw32-g++
-   CFLAGS += -D__WIN32__ -DHAVE_SNPRINTF -DHAVE_VSNPRINTF -D__USE_MINGW_ANSI_STDIO=1 -DHAVE_NETWORK
+   CFLAGS += -D__WIN32__
    TARGET := $(TARGET_NAME)_libretro.dll
    LDFLAGS += --shared -static-libgcc -static-libstdc++ -Wl,--version-script=$(CORE_DIR)/libretro/link.T -L/usr/x86_64-w64-mingw32/lib
    LDFLAGS += -lws2_32 -luser32 -lwinmm -ladvapi32 -lshlwapi -lwsock32 -lws2_32 -lpsapi -liphlpapi -lshell32 -luserenv -lmingw32 -shared -lgcc -lm -lmingw32
 
 # Windows
 else
-   CFLAGS += -D__WIN32__ -DHAVE_SNPRINTF -DHAVE_VSNPRINTF -D__USE_MINGW_ANSI_STDIO=1
+   CFLAGS += -D__WIN32__
    TARGET := $(TARGET_NAME)_libretro.dll
-   LDFLAGS += --shared -static-libgcc -static-libstdc++ -Wl,--version-script=$(CORE_DIR)/libretro/link.T -L/usr/x86_64-w64-mingw32/lib
+   LDFLAGS += --shared -static-libgcc -static-libstdc++ -Wl,--version-script=$(CORE_DIR)/libretro/link.T -Wl,--gc-sections -L/usr/x86_64-w64-mingw32/lib
    LDFLAGS += -lws2_32 -luser32 -lwinmm -ladvapi32 -lshlwapi -lwsock32 -lws2_32 -lpsapi -liphlpapi -lshell32 -luserenv -lmingw32 -shared -lgcc -lm -lmingw32
 endif
 
@@ -359,14 +395,30 @@ endif
 ifeq ($(DEBUG), 1)
    COMMONFLAGS += -O0 -g
 else
-   COMMONFLAGS += -O3 -DNDEBUG
+   COMMONFLAGS += -O3 -DNDEBUG -Wno-format -Wno-format-security
+   LDFLAGS     += -s
 endif
 
+# 7zip
+ifneq ($(NO_7ZIP), 1)
+   COMMONFLAGS += -DHAVE_7ZIP -D_7ZIP_ST
+endif
+
+COMMONFLAGS += -DHAVE_CONFIG_H -MMD -D__LIBRETRO__
+
+# VFS
+ifneq ($(NO_LIBRETRO_VFS), 1)
+   COMMONFLAGS += -DUSE_LIBRETRO_VFS
+endif
+
+COMMONFLAGS += -DCORE_NAME=\"$(EMUTYPE)\"
 include Makefile.common
 
-COMMONFLAGS += -DCORE_NAME=\"$(EMUTYPE)\" -D__LIBRETRO__ -DWANT_ZLIB -DHAVE_CONFIG_H
+$(info CFLAGS: $(CFLAGS) $(COMMONFLAGS))
+$(info -------)
 
 OBJECTS     += $(patsubst %.cpp,%.o,$(SOURCES_CXX:.cc=.o)) $(SOURCES_C:.c=.o)
+OBJECT_DEPS  = $(OBJECTS:.o=.d)
 CXXFLAGS    += $(fpic) $(INCFLAGS) $(COMMONFLAGS)
 CFLAGS      += $(fpic) $(INCFLAGS) $(COMMONFLAGS)
 LDFLAGS     += -lm $(fpic)
@@ -376,9 +428,6 @@ LDFLAGS     += -lm $(fpic)
 # properly in that case.
 #CFLAGS      += -std=c99
 CXXFLAGS    += -std=c++98
-
-$(info CFLAGS: $(CFLAGS))
-$(info -------)
 
 ifeq ($(platform), theos_ios)
 	COMMON_FLAGS := -DIOS -DARM $(COMMON_DEFINES) $(INCFLAGS) -I$(THEOS_INCLUDE_PATH) -Wno-error
@@ -393,21 +442,32 @@ ifeq ($(platform), emscripten)
 	$(CXX) -r $(SHARED) -o $@ $(OBJECTS) $(LDFLAGS)
 else  ifeq ($(STATIC_LINKING), 1)
 	$(AR) rcs $@ $(OBJECTS)
+#STATIC_LINKING=1 and additional Makefile.common sources are incompatible for PS3 environment
+else ifeq ($(platform), ps3)
+	$(AR) rcs $@ $(OBJECTS)
 else
 	$(CXX) -o $@ $(OBJECTS) $(LDFLAGS)
 endif
 
 %.o: %.c
-	$(CC) $(CFLAGS) -c $^ -o $@
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 %.o: %.cpp
-	$(CXX) $(CXXFLAGS) -c $^ -o $@
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 %.o: %.cc
-	$(CXX) $(CXXFLAGS) -c $^ -o $@
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+-include $(OBJECT_DEPS)
 
 clean:
-	rm -f $(OBJECTS) $(TARGET)
+	rm -f $(OBJECTS) $(OBJECT_DEPS) $(TARGET)
+
+objectclean:
+	rm -f $(OBJECTS) $(OBJECT_DEPS)
+
+targetclean:
+	rm -f $(TARGET)
 
 .PHONY: clean
 endif

@@ -33,8 +33,8 @@
 
 #include <stdio.h>
 
+#include "archdep.h"
 #include "drive-snapshot.h"
-#include "ioutil.h"
 #include "joyport.h"
 #include "joystick.h"
 #include "keyboard.h"
@@ -42,30 +42,32 @@
 #include "machine.h"
 #include "maincpu.h"
 #include "resources.h"
-#include "sound.h"
+#include "serial.h"
 #include "snapshot.h"
+#include "sound.h"
 #include "tapeport.h"
 #include "types.h"
 #include "userport.h"
 #include "via.h"
 #include "vic.h"
-#include "vic20-snapshot.h"
 #include "vic20.h"
 #include "vic20memsnapshot.h"
 #include "vice-event.h"
 
+#include "vic20-snapshot.h"
 
-#define SNAP_MAJOR          2
+
+#define SNAP_MAJOR          3
 #define SNAP_MINOR          0
 
 
-int vic20_snapshot_write_to_stream(snapshot_stream_t *stream, int save_roms, int save_disks,
-                                   int event_mode)
+int vic20_snapshot_write(const char *name, int save_roms, int save_disks,
+                         int event_mode)
 {
     snapshot_t *s;
     int ieee488;
 
-    s = snapshot_create_from_stream(stream, ((uint8_t)(SNAP_MAJOR)), ((uint8_t)(SNAP_MINOR)),
+    s = snapshot_create(name, ((uint8_t)(SNAP_MAJOR)), ((uint8_t)(SNAP_MINOR)),
                         machine_name);
     if (s == NULL) {
         return -1;
@@ -80,12 +82,14 @@ int vic20_snapshot_write_to_stream(snapshot_stream_t *stream, int save_roms, int
         || viacore_snapshot_write_module(machine_context.via1, s) < 0
         || viacore_snapshot_write_module(machine_context.via2, s) < 0
         || drive_snapshot_write_module(s, save_disks, save_roms) < 0
+        || fsdrive_snapshot_write_module(s) < 0
         || event_snapshot_write_module(s, event_mode) < 0
         || tapeport_snapshot_write_module(s, save_disks) < 0
         || keyboard_snapshot_write_module(s) < 0
         || joyport_snapshot_write_module(s, JOYPORT_1) < 0
         || userport_snapshot_write_module(s) < 0) {
-        snapshot_free(s);
+        snapshot_close(s);
+        archdep_remove(name);
         return -1;
     }
 
@@ -93,42 +97,27 @@ int vic20_snapshot_write_to_stream(snapshot_stream_t *stream, int save_roms, int
     if (ieee488) {
         if (viacore_snapshot_write_module(machine_context.ieeevia1, s) < 0
             || viacore_snapshot_write_module(machine_context.ieeevia2, s) < 0) {
-            snapshot_free(s);
-            return -1;
+            snapshot_close(s);
+            archdep_remove(name);
+            return 1;
         }
     }
 
-    snapshot_free(s);
+    snapshot_close(s);
     return 0;
 }
 
-int vic20_snapshot_write(const char *name, int save_roms, int save_disks, int event_mode)
-{
-    snapshot_stream_t *stream;
-    int res;
-
-    stream = snapshot_file_write_fopen(name);
-    res = vic20_snapshot_write_to_stream(stream, save_roms, save_disks, event_mode);
-    if (res) {
-        snapshot_fclose_erase(stream);
-    } else if (snapshot_fclose(stream) == EOF) {
-        snapshot_set_error(SNAPSHOT_WRITE_CLOSE_EOF_ERROR);
-        res = -1;
-    }
-    return res;
-}
-
-int vic20_snapshot_read_from_stream(snapshot_stream_t *stream, int event_mode)
+int vic20_snapshot_read(const char *name, int event_mode)
 {
     snapshot_t *s;
     uint8_t minor, major;
 
-    s = snapshot_open_from_stream(stream, &major, &minor, machine_name);
+    s = snapshot_open(name, &major, &minor, machine_name);
     if (s == NULL) {
         return -1;
     }
 
-    if (major != SNAP_MAJOR || minor != SNAP_MINOR) {
+    if (!snapshot_version_is_equal(major, minor, SNAP_MAJOR, SNAP_MINOR)) {
         log_error(LOG_DEFAULT, "Snapshot version (%d.%d) not valid: expecting %d.%d.", major, minor, SNAP_MAJOR, SNAP_MINOR);
         snapshot_set_error(SNAPSHOT_MODULE_INCOMPATIBLE);
         goto fail;
@@ -143,6 +132,7 @@ int vic20_snapshot_read_from_stream(snapshot_stream_t *stream, int event_mode)
         || viacore_snapshot_read_module(machine_context.via1, s) < 0
         || viacore_snapshot_read_module(machine_context.via2, s) < 0
         || drive_snapshot_read_module(s) < 0
+        || fsdrive_snapshot_read_module(s) < 0
         || event_snapshot_read_module(s, event_mode) < 0
         || tapeport_snapshot_read_module(s) < 0
         || keyboard_snapshot_read_module(s) < 0
@@ -159,7 +149,7 @@ int vic20_snapshot_read_from_stream(snapshot_stream_t *stream, int event_mode)
         resources_set_int("IEEE488", 1);
     }
 
-    snapshot_free(s);
+    snapshot_close(s);
 
     sound_snapshot_finish();
 
@@ -167,21 +157,10 @@ int vic20_snapshot_read_from_stream(snapshot_stream_t *stream, int event_mode)
 
 fail:
     if (s != NULL) {
-        snapshot_free(s);
+        snapshot_close(s);
     }
 
     machine_trigger_reset(MACHINE_RESET_MODE_SOFT);
 
     return -1;
-}
-
-int vic20_snapshot_read(const char *name, int event_mode)
-{
-    snapshot_stream_t *stream;
-    int res;
-
-    stream = snapshot_file_read_fopen(name);
-    res = vic20_snapshot_read_from_stream(stream, event_mode);
-    snapshot_fclose(stream);
-    return res;
 }

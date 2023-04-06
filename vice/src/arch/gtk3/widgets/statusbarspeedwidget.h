@@ -30,17 +30,27 @@
 #include "vice.h"
 #include <gtk/gtk.h>
 
+#include "archdep.h"
 #include "vice_gtk3.h"
 
+/** \brief Used to optimise display updates
+ */
+typedef struct statusbar_speed_widget_state_s {
+    tick_t last_render_tick;
+    int last_cpu_int;
+    int last_fps_int;
+    int last_warp;
+    int last_paused;
+    int last_shiftlock;
+    int last_mode4080;
+    int last_capslock;
+} statusbar_speed_widget_state_t;
 
 GtkWidget *speed_menu_popup_create(void);
 
-GtkWidget *statusbar_speed_widget_create(void);
+GtkWidget *statusbar_speed_widget_create(statusbar_speed_widget_state_t *state);
 
-void statusbar_speed_widget_update(
-        GtkWidget *widget,
-        float percent,
-        float framerate,
-        int warp_flag);
+void statusbar_speed_widget_update(GtkWidget *widget, statusbar_speed_widget_state_t *state, int window_identity);
+
 #endif
 

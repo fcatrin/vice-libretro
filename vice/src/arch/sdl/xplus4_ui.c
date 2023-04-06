@@ -40,6 +40,7 @@
 #include "menu_help.h"
 #include "menu_jam.h"
 #include "menu_joyport.h"
+#include "menu_joystick.h"
 #include "menu_media.h"
 #include "menu_monitor.h"
 #include "menu_network.h"
@@ -55,16 +56,20 @@
 #include "menu_sound.h"
 #include "menu_speed.h"
 #include "menu_tape.h"
+#include "menu_userport.h"
 #include "menu_video.h"
 #include "plus4memrom.h"
 #include "plus4ui.h"
+#include "plus4rom.h"
 #include "resources.h"
 #include "ui.h"
 #include "uifonts.h"
 #include "uimenu.h"
 #include "vkbd.h"
 
-static const ui_menu_entry_t xplus4_main_menu[] = {
+static UI_MENU_CALLBACK(pause_callback_wrapper);
+
+static ui_menu_entry_t xplus4_main_menu[] = {
     { "Autostart image",
       MENU_ENTRY_DIALOG,
       autostart_callback,
@@ -129,8 +134,9 @@ static const ui_menu_entry_t xplus4_main_menu[] = {
 #endif
     { "Pause",
       MENU_ENTRY_OTHER_TOGGLE,
-      pause_callback,
+      pause_callback_wrapper,
       NULL },
+    /* Caution: index is hardcoded below */
     { "Advance Frame",
       MENU_ENTRY_OTHER,
       advance_frame_callback,
@@ -139,6 +145,7 @@ static const ui_menu_entry_t xplus4_main_menu[] = {
       MENU_ENTRY_SUBMENU,
       submenu_callback,
       (ui_callback_data_t)monitor_menu },
+    /* Caution: index is hardcoded below */
     { "Virtual keyboard",
       MENU_ENTRY_OTHER,
       vkbd_callback,
@@ -161,7 +168,7 @@ static const ui_menu_entry_t xplus4_main_menu[] = {
       MENU_ENTRY_SUBMENU,
       submenu_callback,
       (ui_callback_data_t)settings_manager_menu },
-#ifdef USE_SDLUI2
+#ifdef USE_SDL2UI
     { "Edit",
       MENU_ENTRY_SUBMENU,
       submenu_callback,
@@ -173,6 +180,22 @@ static const ui_menu_entry_t xplus4_main_menu[] = {
       NULL },
     SDL_MENU_LIST_END
 };
+
+#ifdef HAVE_NETWORK
+# define MENU_ADVANCE_FRAME_IDX      16
+# define MENU_VIRTUAL_KEYBOARD_IDX   18
+#else
+# define MENU_ADVANCE_FRAME_IDX      15
+# define MENU_VIRTUAL_KEYBOARD_IDX   17
+#endif
+static UI_MENU_CALLBACK(pause_callback_wrapper)
+{
+    xplus4_main_menu[MENU_ADVANCE_FRAME_IDX].status =
+        sdl_pause_state || !sdl_menu_state ? MENU_STATUS_ACTIVE : MENU_STATUS_INACTIVE;
+    xplus4_main_menu[MENU_VIRTUAL_KEYBOARD_IDX].status =
+        sdl_pause_state ? MENU_STATUS_INACTIVE : MENU_STATUS_ACTIVE;
+    return pause_callback(activated, param);
+}
 
 static void plus4ui_set_menu_params(int index, menu_draw_t *menu_draw)
 {
@@ -211,7 +234,9 @@ int plus4ui_init(void)
 
     sdl_ui_set_menu_params = plus4ui_set_menu_params;
     uisampler_menu_create();
-    uijoyport_menu_create(1, 1, 1, 1, 1);
+    uijoyport_menu_create(1, 1, 1, 1, 0);
+    uijoystick_menu_create(1, 1, 1, 1, 0);
+    uiuserport_menu_create(0);
     uidrive_menu_create();
     uikeyboard_menu_create();
     uipalette_menu_create("TED", NULL);
@@ -219,7 +244,7 @@ int plus4ui_init(void)
     uimedia_menu_create();
 
     sdl_ui_set_main_menu(xplus4_main_menu);
-    sdl_ui_ted_font_init();
+    sdl_ui_font_init(PLUS4_KERNAL_PAL_REV5_NAME, 0x1000, 0x1400, 0);
     sdl_vkbd_set_vkbd(&vkbd_plus4);
 
 #ifdef HAVE_FFMPEG
@@ -235,6 +260,9 @@ void plus4ui_shutdown(void)
     uisid_menu_shutdown();
     uipalette_menu_shutdown();
     uijoyport_menu_shutdown();
+    uijoystick_menu_shutdown();
+    uiuserport_menu_shutdown();
+    uitapeport_menu_shutdown();
     uimedia_menu_shutdown();
 #ifdef SDL_DEBUG
     fprintf(stderr, "%s\n", __func__);
@@ -244,5 +272,5 @@ void plus4ui_shutdown(void)
     sdl_menu_ffmpeg_shutdown();
 #endif
 
-    sdl_ui_ted_font_shutdown();
+    sdl_ui_font_shutdown();
 }

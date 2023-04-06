@@ -24,6 +24,8 @@
  *
  */
 
+/* #define DEBUGCART */
+
 #include "vice.h"
 
 #include <stdio.h>
@@ -34,6 +36,7 @@
 #include "cartio.h"
 #include "cartridge.h"
 #include "cmdline.h"
+#include "crt.h"
 #include "export.h"
 #include "lib.h"
 #include "log.h"
@@ -41,6 +44,7 @@
 #include "megacart.h"
 #include "mem.h"
 #include "monitor.h"
+#include "ram.h"
 #include "resources.h"
 #include "snapshot.h"
 #include "types.h"
@@ -49,6 +53,12 @@
 #include "vic20cartmem.h"
 #include "vic20mem.h"
 #include "zfile.h"
+
+#ifdef DEBUGCART
+#define DBG(x) log_debug x
+#else
+#define DBG(x)
+#endif
 
 /* ------------------------------------------------------------------------- */
 
@@ -120,33 +130,35 @@ static void megacart_io3_store(uint16_t addr, uint8_t value);
 static int megacart_mon_dump(void);
 
 static io_source_t megacart_io2_device = {
-    CARTRIDGE_VIC20_NAME_MEGACART,
-    IO_DETACH_CART,
-    NULL,
-    0x9800, 0x9bff, 0x3ff,
-    0,
-    megacart_io2_store,
-    megacart_io2_read,
-    NULL, /* TODO: peek */
-    megacart_mon_dump,
-    CARTRIDGE_VIC20_MEGACART,
-    0,
-    0
+    CARTRIDGE_VIC20_NAME_MEGACART, /* name of the device */
+    IO_DETACH_CART,                /* use cartridge ID to detach the device when involved in a read-collision */
+    IO_DETACH_NO_RESOURCE,         /* does not use a resource for detach */
+    0x9800, 0x9bff, 0x3ff,         /* range for the device, regs:$9800-$9bff */
+    0,                             /* read validity is determined by the device upon a read */
+    megacart_io2_store,            /* store function */
+    NULL,                          /* NO poke function */
+    megacart_io2_read,             /* read function */
+    NULL,                          /* TODO: peek function */
+    megacart_mon_dump,             /* device state information dump function */
+    CARTRIDGE_VIC20_MEGACART,      /* cartridge ID */
+    IO_PRIO_NORMAL,                /* normal priority, device read needs to be checked for collisions */
+    0                              /* insertion order, gets filled in by the registration function */
 };
 
 static io_source_t megacart_io3_device = {
-    CARTRIDGE_VIC20_NAME_MEGACART,
-    IO_DETACH_CART,
-    NULL,
-    0x9c00, 0x9fff, 0x3ff,
-    0,
-    megacart_io3_store,
-    megacart_io3_read,
-    megacart_io3_peek,
-    megacart_mon_dump,
-    CARTRIDGE_VIC20_MEGACART,
-    0,
-    0
+    CARTRIDGE_VIC20_NAME_MEGACART, /* name of the device */
+    IO_DETACH_CART,                /* use cartridge ID to detach the device when involved in a read-collision */
+    IO_DETACH_NO_RESOURCE,         /* does not use a resource for detach */
+    0x9c00, 0x9fff, 0x3ff,         /* range for the device, regs:$9c00-$9fff */
+    0,                             /* read validity is determined by the device upon a read */
+    megacart_io3_store,            /* store function */
+    NULL,                          /* NO poke function */
+    megacart_io3_read,             /* read function */
+    megacart_io3_peek,             /* peek function */
+    megacart_mon_dump,             /* device state information dump function */
+    CARTRIDGE_VIC20_MEGACART,      /* cartridge ID */
+    IO_PRIO_NORMAL,                /* normal priority, device read needs to be checked for collisions */
+    0                              /* insertion order, gets filled in by the registration function */
 };
 
 static io_source_list_t *megacart_io2_list_item = NULL;
@@ -158,21 +170,21 @@ static const export_resource_t export_res = {
 
 /* ------------------------------------------------------------------------- */
 
-/* read 0x0400-0x0fff */
+/* read 0x0400-0x0fff (nvram 0x0400 - 0x0fff) */
 uint8_t megacart_ram123_read(uint16_t addr)
 {
     if (nvram_en_flop) {
-        return cart_nvram[addr & 0x1fff];
+        return cart_nvram[addr & 0x0fff];
     } else {
         return vic20_v_bus_last_data;
     }
 }
 
-/* store 0x0400-0x0fff */
+/* store 0x0400-0x0fff (nvram 0x0400 - 0x0fff) */
 void megacart_ram123_store(uint16_t addr, uint8_t value)
 {
     if (nvram_en_flop) {
-        cart_nvram[addr & 0x1fff] = value;
+        cart_nvram[addr & 0x0fff] = value;
     }
 }
 
@@ -276,14 +288,14 @@ void megacart_blk5_store(uint16_t addr, uint8_t value)
     }
 }
 
-/* read 0x9800-0x9bff */
+/* read 0x9800-0x9bff (nvram 0x1800 - 0x1bff) */
 static uint8_t megacart_io2_read(uint16_t addr)
 {
     uint8_t value;
 
     if (nvram_en_flop) {
         megacart_io2_device.io_source_valid = 1;
-        value = cart_nvram[addr & 0x1fff];
+        value = cart_nvram[0x1800 + (addr & 0x3ff)];
     } else {
         megacart_io2_device.io_source_valid = 0;
         value = vic20_cpu_last_data;
@@ -291,22 +303,22 @@ static uint8_t megacart_io2_read(uint16_t addr)
     return value;
 }
 
-/* store 0x9800-0x9bff */
+/* store 0x9800-0x9bff (nvram 0x1800 - 0x1bff) */
 static void megacart_io2_store(uint16_t addr, uint8_t value)
 {
     if (nvram_en_flop) {
-        cart_nvram[addr & 0x1fff] = value;
+        cart_nvram[0x1800 + (addr & 0x3ff)] = value;
     }
 }
 
-/* read 0x9c00-0x9fff */
+/* read 0x9c00-0x9fff (nvram 0x1c00 - 0x1fff) */
 static uint8_t megacart_io3_read(uint16_t addr)
 {
     uint8_t value;
 
     if (nvram_en_flop) {
         megacart_io3_device.io_source_valid = 1;
-        value = cart_nvram[addr & 0x1fff];
+        value = cart_nvram[0x1c00 + (addr & 0x3ff)];
     } else {
         megacart_io3_device.io_source_valid = 0;
         value = vic20_cpu_last_data;
@@ -316,22 +328,25 @@ static uint8_t megacart_io3_read(uint16_t addr)
 
 static uint8_t megacart_io3_peek(uint16_t addr)
 {
-    if ((addr & 0x180) == 0x080) { /* $9c80 */
+    if ((addr & 0x3ff) == 0x080) { /* $9c80 */
         return bank_high_reg;
     }
 
-    if ((addr & 0x180) == 0x100) { /* $9d00 */
+    if ((addr & 0x3ff) == 0x100) { /* $9d00 */
         return bank_low_reg;
     }
 
-    return cart_nvram[addr & 0x1fff];
+    if (nvram_en_flop) {
+        return cart_nvram[0x1c00 + (addr & 0x3ff)];
+    }
+    return vic20_cpu_last_data;
 }
 
-/* store 0x9c00-0x9fff */
+/* store 0x9c00-0x9fff (nvram 0x1c00 - 0x1fff) */
 static void megacart_io3_store(uint16_t addr, uint8_t value)
 {
     if (nvram_en_flop) {
-        cart_nvram[addr & 0x1fff] = value;
+        cart_nvram[0x1c00 + (addr & 0x3ff)] = value;
     }
 
     if ((addr & 0x180) == 0x080) { /* $9c80 */
@@ -357,40 +372,17 @@ static void megacart_io3_store(uint16_t addr, uint8_t value)
 
 /* ------------------------------------------------------------------------- */
 
-void megacart_init(void)
-{
-    if (megacart_log == LOG_ERR) {
-        megacart_log = log_open(CARTRIDGE_VIC20_NAME_MEGACART);
-    }
-
-    reset_mode = BUTTON_RESET;
-    oe_flop = 0;
-    nvram_en_flop = 0;
-}
-
-void megacart_reset(void)
-{
-    if (reset_mode == SOFTWARE_RESET) {
-        oe_flop = !oe_flop;
-    } else {
-        oe_flop = 0;
-    }
-    reset_mode = BUTTON_RESET;
-}
-
-void megacart_config_setup(uint8_t *rawcart)
-{
-}
-
 static int zfile_load(const char *filename, uint8_t *dest, size_t size)
 {
     FILE *fd;
+    off_t len;
 
     fd = zfile_fopen(filename, MODE_READ);
     if (!fd) {
         return -1;
     }
-    if (util_file_length(fd) != size) {
+    len = archdep_file_size(fd);
+    if (len < 0 || (size_t)len != size) {
         zfile_fclose(fd);
         return -1;
     }
@@ -404,15 +396,16 @@ static int zfile_load(const char *filename, uint8_t *dest, size_t size)
 
 static int try_nvram_load(const char *filename)
 {
+    DBG(("cart_nvram: %p filename: %s", cart_nvram, filename ? filename : "NULL"));
     if (cart_nvram && filename && *filename != '\0') {
         if (zfile_load(filename, cart_nvram, (size_t)CART_NVRAM_SIZE) < 0) {
             log_message(megacart_log, "Failed to read NvRAM image `%s'!", filename);
             return -1;
         } else {
             log_message(megacart_log, "Read NvRAM image `%s'.", filename);
+            return 1;
         }
     }
-
     return 0;
 }
 
@@ -440,7 +433,37 @@ static int try_nvram_save(const char *filename)
     return ret;
 }
 
-int megacart_bin_attach(const char *filename)
+/* ------------------------------------------------------------------------- */
+
+/* FIXME: this still needs to be tweaked to match the hardware */
+static RAMINITPARAM ramparam = {
+    .start_value = 255,
+    .value_invert = 2,
+    .value_offset = 1,
+
+    .pattern_invert = 0x100,
+    .pattern_invert_value = 255,
+
+    .random_start = 0,
+    .random_repeat = 0,
+    .random_chance = 0,
+};
+
+/* FIXME: this still needs to be tweaked to match the hardware */
+static RAMINITPARAM nvramparam = {
+    .start_value = 255,
+    .value_invert = 2,
+    .value_offset = 1,
+
+    .pattern_invert = 0x100,
+    .pattern_invert_value = 255,
+
+    .random_start = 0,
+    .random_repeat = 0,
+    .random_chance = 0,
+};
+
+static void allocate_rom_ram(void)
 {
     if (!cart_ram) {
         cart_ram = lib_malloc(CART_RAM_SIZE);
@@ -451,6 +474,99 @@ int megacart_bin_attach(const char *filename)
     if (!cart_rom) {
         cart_rom = lib_malloc(CART_ROM_SIZE);
     }
+}
+
+static void clear_ram(void)
+{
+    if (cart_ram) {
+        DBG(("clear_ram: cart_ram"));
+        ram_init_with_pattern(cart_ram, CART_RAM_SIZE, &ramparam);
+    }
+    if (cart_nvram) {
+        DBG(("clear_ram: cart_nvram"));
+        ram_init_with_pattern(cart_nvram, CART_NVRAM_SIZE, &nvramparam);
+    }
+}
+
+void megacart_init(void)
+{
+    if (megacart_log == LOG_ERR) {
+        megacart_log = log_open(CARTRIDGE_VIC20_NAME_MEGACART);
+    }
+}
+
+void megacart_reset(void)
+{
+    if (reset_mode == SOFTWARE_RESET) {
+        oe_flop = !oe_flop;
+    } else {
+        oe_flop = 0;
+    }
+    reset_mode = BUTTON_RESET;
+}
+
+void megacart_powerup(void)
+{
+    reset_mode = BUTTON_RESET;
+    oe_flop = 0;
+    nvram_en_flop = 1;
+}
+
+void megacart_config_setup(uint8_t *rawcart)
+{
+}
+
+int megacart_crt_attach(FILE *fd, uint8_t *rawcart)
+{
+    crt_chip_header_t chip;
+    int idx = 0;
+
+    allocate_rom_ram();
+    clear_ram();
+
+    for (idx = 0; idx < 256; idx++) {
+        if (crt_read_chip_header(&chip, fd)) {
+            goto exiterror;
+        }
+
+        DBG(("chip %d at %02x len %02x", idx, chip.start, chip.size));
+        if (chip.size != 0x2000) {
+            goto exiterror;
+        }
+
+        if (crt_read_chip(&cart_rom[0x2000 * idx], 0, &chip, fd)) {
+            goto exiterror;
+        }
+    }
+
+    if (export_add(&export_res) < 0) {
+        goto exiterror;
+    }
+
+    try_nvram_load(nvram_filename);
+
+    cart_rom_low = cart_rom;
+    cart_rom_high = cart_rom + 0x100000;
+
+    mem_cart_blocks = VIC_CART_RAM123 |
+                      VIC_CART_BLK1 | VIC_CART_BLK2 | VIC_CART_BLK3 | VIC_CART_BLK5 |
+                      VIC_CART_IO2 | VIC_CART_IO3;
+    mem_initialize_memory();
+
+    megacart_io2_list_item = io_source_register(&megacart_io2_device);
+    megacart_io3_list_item = io_source_register(&megacart_io3_device);
+
+    return CARTRIDGE_VIC20_MEGACART;
+
+exiterror:
+    megacart_detach();
+    return -1;
+}
+
+int megacart_bin_attach(const char *filename)
+{
+    allocate_rom_ram();
+    clear_ram();
 
     if (zfile_load(filename, cart_rom, (size_t)CART_ROM_SIZE) < 0) {
         megacart_detach();
@@ -694,7 +810,8 @@ static int megacart_mon_dump(void)
 
     mon_out("BLKn: ");
     if (!ram_low_en) {
-        mon_out("ROM bank $%02x (offset $%06x)\n", bank_low, bank_low * 0x2000);
+        mon_out("ROM bank $%02x (offset $%06x)\n",
+                bank_low, bank_low * 0x2000U);
     } else {
         if (ram_high_en) {
             mon_out("RAM %s\n", ram_wp ? "(write protected)" : "");
@@ -705,10 +822,10 @@ static int megacart_mon_dump(void)
 
     mon_out("BLK5: ");
     if (!ram_high_en) {
-        mon_out("ROM bank $%02x (offset $%06x)\n", bank_high, bank_high * 0x2000 + 0x100000);
+        mon_out("ROM bank $%02x (offset $%06x)\n", bank_high, bank_high * 0x2000U + 0x100000U);
     } else {
         if (!ram_low_en) {
-            mon_out("ROM bank $%02x (offset $%06x)\n", bank_low, bank_low * 0x2000);
+            mon_out("ROM bank $%02x (offset $%06x)\n", bank_low, bank_low * 0x2000U);
         } else {
             mon_out("RAM %s\n", ram_wp ? "(write protected)" : "");
         }

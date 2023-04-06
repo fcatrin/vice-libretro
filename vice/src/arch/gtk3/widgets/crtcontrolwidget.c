@@ -18,6 +18,7 @@
  * |Scanline shade      | yes  | yes  |yes|yes |yes |yes |yes |yes |
  * |Odd lines phase     | yes  |  no  | no|yes | no |yes | no | no |
  * |Odd lines offset    | yes  |  no  | no|yes | no |yes | no | no |
+ * |U-only delayline    | yes  |  no  | no|yes | no |yes | no | no |
  *
  * TODO:    Fix display of sliders when switching between PAL and NTSC
  */
@@ -40,6 +41,7 @@
  * $VICERES TEDPALOddLineOffset     xplus4
  * $VICERES TEDPALOddLinePhase      xplus4
  * $VICERES TEDPALScanLineShade     xplus4
+ * $VICERES TEDPALDelaylineType     xplus4
  *
  * $VICERES VDCColorBrightness      x128
  * $VICERES VDCColorContrast        x128
@@ -58,6 +60,7 @@
  * $VICERES VICPALOddLineOffset     xvic
  * $VICERES VICPALOddLinePhase      xvic
  * $VICERES VICPALScanLineShade     xvic
+ * $VICERES VICPALDelaylineType     xvic
  *
  * $VICERES VICIIColorBrightness    x64 x64sc x64dtv xscpu64 x128 xcbm5x0
  * $VICERES VICIIColorContrast      x64 x64sc x64dtv xscpu64 x128 xcbm5x0
@@ -68,6 +71,7 @@
  * $VICERES VICIIPALOddLineOffset   x64 x64sc x64dtv xscpu64 x128 xcbm5x0
  * $VICERES VICIIPALOddLinePhase    x64 x64sc x64dtv xscpu64 x128 xcbm5x0
  * $VICERES VICIIPALScanLineShade   x64 x64sc x64dtv xscpu64 x128 xcbm5x0
+ * $VICERES VICIIPALDelaylineType   x64 x64sc x64dtv xscpu64 x128 xcbm5x0
  */
 
 /*
@@ -93,18 +97,19 @@
 
 #include "vice.h"
 
-#include <string.h>
 #include <gtk/gtk.h>
+#include <string.h>
 
-#include "vice_gtk3.h"
-#include "resources.h"
 #include "lib.h"
+#include "log.h"
 #include "machine.h"
-
+#include "resources.h"
+#include "vice_gtk3.h"
 
 #include "crtcontrolwidget.h"
 
-/** \brief  CSS for the scales
+
+/** \brief  CSS for the scale widgets in the status bar CRT widget
  *
  * This makes the sliders take up less vertical space. The margin can be set
  * to a negative value (in px) to allow the slider to be larger than the scale
@@ -113,8 +118,43 @@
  * Probably will require some testing/tweaking to get this to look acceptable
  * with various themes (and OSes).
  */
-#define SLIDER_CSS "scale slider { min-width: 10px; min-height: 10px; margin: -3px; } scale { margin-top: -4px; margin-bottom: -4px; }"
+#define SCALE_CSS_STATUSBAR \
+    "scale slider {\n" \
+    "  min-width: 10px;\n" \
+    "  min-height: 10px;\n" \
+    "  margin: -3px;\n" \
+    "}\n\n" \
+    "scale value {\n" \
+    "  font-family: monospace;\n" \
+    "  font-size: 80%;\n" \
+    "}\n" \
+    "scale {\n" \
+    "  margin-top: -8px;\n" \
+    "  margin-bottom: -8px;\n" \
+    "}"
 
+
+/** \brief  CSS used to tweak looks of CRT sliders in the settings dialog
+ *
+ * We use monospace for the value labels to keep them aligned on the decimal
+ * point and to keep the width of the sliders consistent.
+ */
+#define SCALE_CSS_DIALOG \
+    "scale value {\n" \
+    "  font-family: monospace;\n" \
+    "}"
+
+
+/** \brief  CSS for the "U-only delayline" check button on the status bar
+ */
+#define CHECKBUTTON_CSS_STATUSBAR \
+    "checkbutton {\n" \
+    "  font-size: 80%;\n" \
+    "}\n" \
+    "checkbutton check {\n" \
+    "  min-width: 12px;\n" \
+    "  min-height: 12px;\n" \
+    "}"
 
 /** \brief  CSS for the labels
  *
@@ -122,7 +162,22 @@
  *
  * Here Be Dragons!
  */
-#define LABEL_CSS "label { font-size: 80%; margin-top: -2px; margin-bottom: -2px; }"
+#define LABEL_CSS \
+    "label {\n" \
+    "  font-size: 80%;\n" \
+    "  margin-top: -2px;\n" \
+    "  margin-bottom: -2px;\n" \
+    "}"
+
+
+/** \brief  Number of valid resources for PAL */
+#define RESOURCE_COUNT_PAL  9
+
+/** \brief  Number of valid resources for NTSC */
+#define RESOURCE_COUNT_NTSC 5
+
+/** \brief  Size of array required for all resources */
+#define RESOURCE_COUNT_MAX  RESOURCE_COUNT_PAL
 
 
 /** \brief  Video chip identifiers
@@ -130,13 +185,66 @@
  * Allows for easier/faster switching than using strcmp()
  */
 enum {
-    CHIP_CRTC,
-    CHIP_TED,
-    CHIP_VDC,
-    CHIP_VIC,
-    CHIP_VICII,
+    CHIP_CRTC,      /**< CRTC videochip (CBM-II 6x0/7x0, PET) */
+    CHIP_TED,       /**< TED videochip (Plus4, C16) */
+    CHIP_VDC,       /**< VDC videochip (C128) */
+    CHIP_VIC,       /**< VIC videochip (VIC20) */
+    CHIP_VICII,     /**< VIC-II videochip (C64, C128, CBM-II 5x0) */
 
-    CHIP_ID_COUNT
+    CHIP_ID_COUNT   /**< Number of CHIP ID's */
+};
+
+/** \brief  CRT resource info
+ */
+typedef struct crt_control_resource_s {
+    const char *label;  /**< Displayed name (label) */
+    const char *name;   /**< Resource name excluding CHIP prefix */
+    int low;            /**< lowest value for resource */
+    int high;           /**< highest value for resource */
+    int step;           /**< stepping for the spin button */
+    gdouble disp_low;   /**< display low */
+    gdouble disp_high;  /**< display high */
+    gdouble disp_step;  /**< stepping for the displayed values */
+    const char *disp_fmt;   /**< format string for the displayed value */
+} crt_control_resource_t;
+
+
+/** \brief  CRT resource object
+ */
+typedef struct crt_control_s {
+    crt_control_resource_t res;     /**< resource info */
+    GtkWidget *scale;               /**< GtkScale reference */
+#if 0
+    GtkWidget *spin;                /**< GtkSpinButton reference */
+#endif
+} crt_control_t;
+
+
+/** \brief  Object holding internal state of a CRT control widget
+ *
+ * Since we can have two video chips (C128's VICII+VDC), we cannot use static
+ * references to widgets and need to allocate memory for the references and
+ * clean that memory up once the widget is destroyed.
+ */
+typedef struct crt_control_data_s {
+    char *chip;                                 /**< video chip name */
+    crt_control_t controls[RESOURCE_COUNT_MAX]; /**< list of controls */
+    GtkWidget *delayline;
+} crt_control_data_t;
+
+
+/** \brief  List of CRT emulation resources
+ */
+static const crt_control_resource_t resource_table[RESOURCE_COUNT_MAX] = {
+    { "Brightness",     "ColorBrightness",  0, 2000, 100,   0.0, 200.0,  0.1, "%5.1f%%" },
+    { "Contrast",       "ColorContrast",    0, 2000, 100,   0.0, 200.0,  0.1, "%5.1f%%" },
+    { "Saturation",     "ColorSaturation",  0, 2000, 100,   0.0, 200.0,  0.1, "%5.1f%%" },
+    { "Tint",           "ColorTint",        0, 2000, 100, -25.0,  25.0,  0.1, "%+5.1f%%" },
+    { "Gamma",          "ColorGamma",       0, 4000, 200,   0.0,   4.0, 0.01, "%6.2f" },
+    { "Blur",           "PALBlur",          0, 1000,  50,   0.0, 100.0,  0.1, "%5.1f%%" },
+    { "Scanline shade", "PALScanLineShade", 0, 1000,  50,   0.0, 100.0,  0.1, "%5.1f%%" },
+    { "Oddline phase",  "PALOddLinePhase",  0, 2000, 100, -25.0,  25.0,  0.1, "%+5.1f\u00b0" },
+    { "Oddline offset", "PALOddLineOffset", 0, 2000, 100, -50.0,  50.0,  0.1, "%+4.1f%%" }
 };
 
 
@@ -148,6 +256,8 @@ typedef struct chip_id_s {
 } chip_id_t;
 
 
+/** \brief  Enum mapping CHIP prefixes to CHIP ID's
+ */
 static const chip_id_t chips[CHIP_ID_COUNT] = {
     { "CRTC",   CHIP_CRTC },
     { "TED",    CHIP_TED },
@@ -155,6 +265,19 @@ static const chip_id_t chips[CHIP_ID_COUNT] = {
     { "VIC",    CHIP_VIC },
     { "VICII",  CHIP_VICII }
 };
+
+
+/** \brief  CSS provider for labels
+ */
+static GtkCssProvider *label_css_provider;
+
+/** \brief  CSS provider for scales in the CRT widget for the statusbar
+ */
+static GtkCssProvider *scale_css_statusbar;
+
+/** \brief  CSS provider for scales in the settings dialog
+ */
+static GtkCssProvider *scale_css_dialog;
 
 
 /** \brief  Find chip ID by \a name
@@ -176,27 +299,31 @@ static int get_chip_id(const char *name)
 }
 
 
-/** \brief  Object holding internal state of a CRT control widget
+/** \brief  Determine if the PAL-specific controls must be enabled
  *
- * Since we can have two video chips (C128's VICII+VDC), we cannot use static
- * references to widgets and need to allocate memory for the references and
- * clean that memory up once the widget is destroyed.
+ * Check video standard and \a chip for PAL support.
+ *
+ * \param[in]   chip    video chip name
+ *
+ * \return  TRUE if PAL controls must be enabled
  */
-typedef struct crt_control_data_s {
-    char *chip;
-    GtkWidget *color_brightness;
-    GtkWidget *color_contrast;
-    GtkWidget *color_gamma;
-    GtkWidget *color_saturation;
-    GtkWidget *color_tint;
-    GtkWidget *pal_blur;
-    GtkWidget *pal_scanline_shade;
-    GtkWidget *pal_oddline_offset;
-    GtkWidget *pal_oddline_phase;
-} crt_control_data_t;
+static gboolean is_pal(const char *chip)
+{
+    int standard = 0;
+    int chip_id;
+
+    resources_get_int("MachineVideoStandard", &standard);
+    chip_id = get_chip_id(chip);
+
+    if ((standard == MACHINE_SYNC_PAL || standard == MACHINE_SYNC_PALN) &&
+            (chip_id != CHIP_CRTC && chip_id != CHIP_VDC)) {
+        return TRUE;
+    }
+    return FALSE;
+}
 
 
-/** \brief  Reset all sliders to the resource value when creating the widget
+/** \brief  Reset all sliders to their factory value
  *
  * \param[in]   widget      reset button
  * \param[in]   user_data   extra event data (unused)
@@ -205,37 +332,19 @@ static void on_reset_clicked(GtkWidget *widget, gpointer user_data)
 {
     GtkWidget *parent;
     crt_control_data_t *data;
+    int i;
 
-    /* parent widget (grid), contains the InternalState object */
     parent = gtk_widget_get_parent(widget);
     data = g_object_get_data(G_OBJECT(parent), "InternalState");
+    for (i = 0; i < RESOURCE_COUNT_MAX; i++) {
+        crt_control_t control = data->controls[i];
 
-    if (data->color_brightness != NULL) {
-        vice_gtk3_resource_scale_int_reset(data->color_brightness);
-    }
-    if (data->color_contrast != NULL) {
-        vice_gtk3_resource_scale_int_reset(data->color_contrast);
-    }
-    if (data->color_gamma != NULL) {
-        vice_gtk3_resource_scale_int_reset(data->color_gamma);
-    }
-    if (data->color_saturation != NULL) {
-        vice_gtk3_resource_scale_int_reset(data->color_saturation);
-    }
-    if (data->color_tint != NULL) {
-        vice_gtk3_resource_scale_int_reset(data->color_tint);
-    }
-    if (data->pal_blur != NULL) {
-        vice_gtk3_resource_scale_int_reset(data->pal_blur);
-    }
-    if (data->pal_scanline_shade != NULL) {
-        vice_gtk3_resource_scale_int_reset(data->pal_scanline_shade);
-    }
-    if (data->pal_oddline_offset != NULL) {
-        vice_gtk3_resource_scale_int_reset(data->pal_oddline_offset);
-    }
-    if (data->pal_oddline_phase != NULL) {
-        vice_gtk3_resource_scale_int_reset(data->pal_oddline_phase);
+        if (control.scale != NULL) {
+            vice_gtk3_resource_scale_custom_factory(control.scale);
+            /* No need to reset the spin button, that gets triggered via
+             * the scale widget
+             */
+        }
     }
 }
 
@@ -256,8 +365,6 @@ static void on_widget_destroy(GtkWidget *widget, gpointer user_data)
 }
 
 
-
-
 /** \brief  Create right-aligned label with a smaller font
  *
  * \param[in]   text    label text
@@ -268,27 +375,12 @@ static void on_widget_destroy(GtkWidget *widget, gpointer user_data)
 static GtkWidget *create_label(const char *text, gboolean minimal)
 {
     GtkWidget *label;
-    GtkCssProvider *provider;
-    GtkStyleContext *context;
-    GError *err = NULL;
 
     label = gtk_label_new(text);
     gtk_widget_set_halign(label, GTK_ALIGN_END);
 
     if (minimal) {
-        provider = gtk_css_provider_new();
-        gtk_css_provider_load_from_data(provider, LABEL_CSS, -1, &err);
-        if (err != NULL) {
-            fprintf(stderr, "CSS error: %s\n", err->message);
-            g_error_free(err);
-        }
-
-        context = gtk_widget_get_style_context(label);
-        if (context != NULL) {
-            gtk_style_context_add_provider(context,
-                    GTK_STYLE_PROVIDER(provider),
-                    GTK_STYLE_PROVIDER_PRIORITY_USER);
-        }
+        vice_gtk3_css_provider_add(label, label_css_provider);
     }
 
     return label;
@@ -297,197 +389,165 @@ static GtkWidget *create_label(const char *text, gboolean minimal)
 
 /** \brief  Create a customized GtkScale for \a resource
  *
- * \param[in]   resource    resource name without the video \a chip name prefix
- * \param[in]   chip        video chip name
- * \param[in]   low         lower bound
- * \param[in]   high        upper bound
- * \param[in]   step        step used to increase/decrease slider value
+ * \param[in]   resource        resource name without the \a chip prefix
+ * \param[in]   chip            video chip name
+ * \param[in]   resource_low    resource value lower bound
+ * \param[in]   resource_high   resource value upper bound
+ * \param[in]   display_low     display value lower bound
+ * \param[in]   display_high    display value upper bound
+ * \param[in]   display_step    display value stepping
+ * \param[in]   display_format  format string for displaying value
+ * \param[in]   minimal         reduced size (for the statusbar widget)
  *
  * \return  GtkScale
  */
-static GtkWidget *create_slider(const char *resource, const char *chip,
-        int low, int high, int step, gboolean minimal)
+static GtkWidget *create_slider(
+        const char *resource, const char *chip,
+        int resource_low, int resource_high,
+        gdouble display_low, gdouble display_high, gdouble display_step,
+        const char *display_format,
+        gboolean minimal)
 {
     GtkWidget *scale;
-    GtkCssProvider *css_provider;
-    GtkStyleContext *style_context;
-    GError *err = NULL;
 
-    scale = vice_gtk3_resource_scale_int_new_sprintf("%s%s",
-            GTK_ORIENTATION_HORIZONTAL, low, high, step,
-            chip, resource);
+    scale = vice_gtk3_resource_scale_custom_new_printf(
+            "%s%s",
+            GTK_ORIENTATION_HORIZONTAL,
+            resource_low, resource_high,
+            display_low, display_high, display_step,
+            display_format, chip, resource);
     gtk_widget_set_hexpand(scale, TRUE);
     gtk_scale_set_value_pos(GTK_SCALE(scale), GTK_POS_RIGHT);
-    vice_gtk3_resource_scale_int_set_marks(scale, step);
 
     /* set up custom CSS to make the scale take up less space */
     if (minimal) {
-        css_provider = gtk_css_provider_new();
-        gtk_css_provider_load_from_data(css_provider, SLIDER_CSS, -1, &err);
-        if (err != NULL) {
-            fprintf(stderr, "CSS error: %s\n", err->message);
-            g_error_free(err);
-        }
-
-        style_context = gtk_widget_get_style_context(scale);
-        if (style_context != NULL) {
-            gtk_style_context_add_provider(style_context,
-                    GTK_STYLE_PROVIDER(css_provider),
-                    GTK_STYLE_PROVIDER_PRIORITY_USER);
-        }
+        vice_gtk3_css_provider_add(scale, scale_css_statusbar);
+    } else {
+        vice_gtk3_css_provider_add(scale, scale_css_dialog);
     }
-
-    /* don't draw the value next to the scale */
-    /* gtk_scale_set_draw_value(GTK_SCALE(scale), FALSE); */
 
     return scale;
 }
 
+/** \brief  Create "U-only delayline" check button
+ *
+ * \param[in]   chip    video chip name
+ *
+ * \return  GtkCheckButton
+ */
+static GtkWidget *create_delayline_widget(const char *chip)
+{
+    GtkWidget *check;
 
+    check = vice_gtk3_resource_check_button_new_sprintf(
+            "%sPALDelaylineType", "U-only Delayline", chip);
+    return check;
+}
 
 /** \brief  Add GtkScale sliders to \a grid
  *
  * \param[in,out]   grid    grid to add widgets to
  * \param[in,out]   data    internal data of the main widget
- * \param[in]       minimal minimize size of the slider
+ * \param[in]       minimal minimize size of the slider, no spinboxes
  *
  * \return  row number of last widget added
  */
-static void add_sliders(GtkGrid *grid,
+static int add_sliders(GtkGrid *grid,
                         crt_control_data_t *data,
                         gboolean minimal)
 {
     GtkWidget *label;
     const char *chip;
-    int video_standard;
     int row = 1;
     int chip_id;
-    gboolean enabled;
-    int oldrow;
+    size_t i;
 
     chip = data->chip;
     chip_id = get_chip_id(chip);
     if (chip_id < 0) {
-        debug_gtk3("failed to get chip ID for '%s'.", chip);
-        return;
+        log_error(LOG_ERR, "failed to get chip ID for '%s'.", chip);
+        return 0;
     }
-
-    /* get PAL/NTSC mode */
-    if (resources_get_int("MachineVideoStandard", &video_standard) < 0) {
-        debug_gtk3("failed to get 'MachineVideoStandard' resource value.");
-        return;
-    }
-
-    oldrow = row;
-
-    label = create_label("Brightness", minimal);
-    data->color_brightness = create_slider("ColorBrightness", chip,
-            0, 2000, 100, minimal);
-    gtk_grid_attach(grid, label, 0, row, 1, 1);
-    gtk_grid_attach(grid, data->color_brightness, 1, row, 1, 1);
-    row++;
-
-    label = create_label("Contrast", minimal);
-    data->color_contrast = create_slider("ColorContrast", chip,
-            0, 2000, 100, minimal);
-    gtk_grid_attach(grid, label, 0, row, 1, 1);
-    gtk_grid_attach(grid, data->color_contrast, 1, row, 1, 1);
-    row++;
-
-    label = create_label("Saturation", minimal);
-    data->color_saturation = create_slider("ColorSaturation", chip,
-            0, 2000, 100, minimal);
-    gtk_grid_attach(grid, label, 0, row, 1, 1);
-    gtk_grid_attach(grid, data->color_saturation, 1, row, 1, 1);
-    row++;
-
-    label = create_label("Tint", minimal);
-    data->color_tint = create_slider("ColorTint", chip,
-            0, 2000, 100, minimal);
-    gtk_grid_attach(grid, label, 0, row, 1, 1);
-    gtk_grid_attach(grid, data->color_tint, 1, row, 1, 1);
-    row++;
-
-    label = create_label("Gamma", minimal);
-    data->color_gamma = create_slider("ColorGamma", chip,
-            0, 4000, 200, minimal);
-    gtk_grid_attach(grid, label, 0, row, 1, 1);
-    gtk_grid_attach(grid, data->color_gamma, 1, row, 1, 1);
-    row++;
 
     if (!minimal) {
-
-        label = create_label("Blur", minimal);
-        data->pal_blur = create_slider("PALBlur", chip,
-                0, 1000, 50, minimal);
-        gtk_grid_attach(grid, label, 0, row, 1, 1);
-        gtk_grid_attach(grid, data->pal_blur, 1, row, 1, 1);
-        row++;
-
-        label = create_label("Scanline shade", minimal);
-        data->pal_scanline_shade = create_slider("PALScanLineShade", chip,
-                0, 1000, 50, minimal);
-        gtk_grid_attach(grid, label, 0, row, 1, 1);
-        gtk_grid_attach(grid, data->pal_scanline_shade, 1, row, 1, 1);
-        row++;
-
-        label = create_label("Odd lines phase", minimal);
-        data->pal_oddline_phase = create_slider("PALOddLinePhase", chip,
-                0, 2000, 100, minimal);
-        gtk_grid_attach(grid, label, 0, row, 1, 1);
-        gtk_grid_attach(grid, data->pal_oddline_phase, 1, row, 1, 1);
-        row++;
-
-        label = create_label("Odd lines offset", minimal);
-        data->pal_oddline_offset = create_slider("PALOddLineOffset", chip,
-                0, 2000, 100, minimal);
-        gtk_grid_attach(grid, label, 0, row, 1, 1);
-        gtk_grid_attach(grid, data->pal_oddline_offset, 1, row, 1, 1);
-        row++;
+        for (i = 0; i < RESOURCE_COUNT_MAX; i ++) {
+            crt_control_t *control = &(data->controls[i]);
+            label = create_label(control->res.label, minimal);
+            gtk_grid_attach(grid, label, 0, row, 1, 1);
+            control->scale = create_slider(control->res.name, chip,
+                    control->res.low, control->res.high,
+                    control->res.disp_low, control->res.disp_high, control->res.disp_step,
+                    control->res.disp_fmt,
+                    minimal);
+            gtk_grid_attach(grid, control->scale, 1, row, 1, 1);
+            row++;
+        }
     } else {
-        /* minimal display: two rows */
-
-        row = oldrow;
-        label = create_label("Blur", minimal);
-        data->pal_blur = create_slider("PALBlur", chip,
-                0, 1000, 50, minimal);
-        gtk_grid_attach(grid, label, 2, row, 1, 1);
-        gtk_grid_attach(grid, data->pal_blur, 3, row, 1, 1);
-        row++;
-
-        label = create_label("Scanline shade", minimal);
-        data->pal_scanline_shade = create_slider("PALScanLineShade", chip,
-                0, 1000, 50, minimal);
-        gtk_grid_attach(grid, label, 2, row, 1, 1);
-        gtk_grid_attach(grid, data->pal_scanline_shade, 3, row, 1, 1);
-        row++;
-
-        label = create_label("Odd lines phase", minimal);
-        data->pal_oddline_phase = create_slider("PALOddLinePhase", chip,
-                0, 2000, 100, minimal);
-        gtk_grid_attach(grid, label, 2, row, 1, 1);
-        gtk_grid_attach(grid, data->pal_oddline_phase, 3, row, 1, 1);
-        row++;
-
-        label = create_label("Odd lines offset", minimal);
-        data->pal_oddline_offset = create_slider("PALOddLineOffset", chip,
-                0, 2000, 100, minimal);
-        gtk_grid_attach(grid, label, 2, row, 1, 1);
-        gtk_grid_attach(grid, data->pal_oddline_offset, 3, row, 1, 1);
-        row++;
-
+        /* Add sliders for statusbar popup */
+        for (i = 0; i < RESOURCE_COUNT_MAX; i ++) {
+            int col = (i % 2) * 2;
+            crt_control_t *control = &(data->controls[i]);
+            label = create_label(control->res.label, minimal);
+            gtk_grid_attach(grid, label, col + 0, row, 1, 1);
+            control->scale = create_slider(control->res.name, chip,
+                    control->res.low, control->res.high,
+                    control->res.disp_low, control->res.disp_high, control->res.disp_step,
+                    control->res.disp_fmt,
+                    minimal);
+            gtk_grid_attach(grid, control->scale, col + 1, row, 1, 1);
+            if (col > 0) {
+                row++;
+            }
+        }
     }
 
-    /* Standard controls: brightness, gamma etc */
+    /* Determine if we're using PAL or NTSC: the *PAL* resource sliders should be
+     * disabled when the video standard is NTSC: */
+    if (!is_pal(chip)) {
+        for (i = 0; i < RESOURCE_COUNT_MAX; i ++) {
+            crt_control_t *control = &(data->controls[i]);
+            int is_ntsc = strncmp(control->res.name, "PAL", 3) != 0;
 
-    enabled = ((video_standard == 0 /* PAL */
-                || video_standard == 1 /* Old PAL */
-                || video_standard == 4 /* PAL-N/Drean */
-                ) && chip_id != CHIP_CRTC && chip_id != CHIP_VDC);
+            if (control->scale != NULL) {
+                gtk_widget_set_sensitive(control->scale, is_ntsc);
+            }
+        }
+    }
 
-    gtk_widget_set_sensitive(data->pal_oddline_phase, enabled);
-    gtk_widget_set_sensitive(data->pal_oddline_offset, enabled);
+    return row + 1;
+}
 
+
+/** \brief  Create heap-allocated CRT controls state object
+ *
+ * We need this since we share this code with the CRT controls available via
+ * the statusbar.
+ *
+ * \param[in]   chip    video chip name
+ *
+ * \return  heap-allocated CRT controls state object
+ */
+static crt_control_data_t *create_control_data(const char *chip)
+{
+    crt_control_data_t *data = lib_malloc(sizeof *data);
+    size_t i;
+
+    data->chip = lib_strdup(chip);
+    for (i = 0; i < RESOURCE_COUNT_MAX; i++) {
+        crt_control_t *control = &(data->controls[i]);
+        control->res.label = resource_table[i].label;
+        control->res.name = resource_table[i].name;
+        control->res.low = resource_table[i].low;
+        control->res.high = resource_table[i].high;
+        control->res.step = resource_table[i].step;
+        control->res.disp_low = resource_table[i].disp_low;
+        control->res.disp_high = resource_table[i].disp_high;
+        control->res.disp_step = resource_table[i].disp_step;
+        control->res.disp_fmt = resource_table[i].disp_fmt;
+        control->scale = NULL;
+    }
+    data->delayline = NULL;
+    return data;
 }
 
 
@@ -508,44 +568,62 @@ GtkWidget *crt_control_widget_create(GtkWidget *parent,
     GtkWidget *label;
     GtkWidget *button;
     gchar buffer[256];
-
     crt_control_data_t *data;
+    int row;
 
-    data = lib_malloc(sizeof *data);
-    data->chip = lib_stralloc(chip);
-    data->color_brightness = NULL;
-    data->color_contrast = NULL;
-    data->color_gamma = NULL;
-    data->color_saturation = NULL;
-    data->color_tint = NULL;
-    data->pal_blur = NULL;
-    data->pal_oddline_offset = NULL;
-    data->pal_oddline_phase = NULL;
-    data->pal_scanline_shade = NULL;
+    /* create reusable CSS providers */
+    label_css_provider = vice_gtk3_css_provider_new(LABEL_CSS);
+    if (label_css_provider == NULL) {
+        return NULL;
+    }
+    scale_css_statusbar = vice_gtk3_css_provider_new(SCALE_CSS_STATUSBAR);
+    if (scale_css_statusbar == NULL) {
+        return NULL;
+    }
+    scale_css_dialog = vice_gtk3_css_provider_new(SCALE_CSS_DIALOG);
+    if (scale_css_dialog == NULL) {
+        return NULL;
+    }
+
+    data = create_control_data(chip);
 
     grid = vice_gtk3_grid_new_spaced(16, 0);
-    /* g_object_set(grid, "font-size", 9, NULL); */
-    g_object_set(grid, "margin-left", 8, "margin-right", 8, NULL);
-
+    gtk_widget_set_margin_start(grid, 8);
+    gtk_widget_set_margin_end(grid, 8);
     if (minimal) {
-        g_snprintf(buffer, 256, "<small><b>CRT settings (%s)</b></small>", chip);
+        g_snprintf(buffer, sizeof buffer,
+                   "<small><b>CRT settings (%s)</b></small>", chip);
     } else {
-        g_snprintf(buffer, 256, "<b>CRT settings (%s)</b>", chip);
+        g_snprintf(buffer, sizeof buffer, "<b>CRT settings (%s)</b>", chip);
     }
+
     label = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(label), buffer);
     gtk_widget_set_halign(label, GTK_ALIGN_CENTER);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 0, 1, 1);
 
-    add_sliders(GTK_GRID(grid), data, minimal);
+    /* add scales and spin buttons */
+    row = add_sliders(GTK_GRID(grid), data, minimal);
+
+    /* add U-only delayline check button */
+    data->delayline = create_delayline_widget(chip);
+    if (minimal) {
+        vice_gtk3_css_add(data->delayline, CHECKBUTTON_CSS_STATUSBAR);
+        gtk_grid_attach(GTK_GRID(grid), data->delayline, 2, row - 1, 2, 1);
+    } else {
+        gtk_grid_attach(GTK_GRID(grid), data->delayline, 0, row, 3, 1);
+    }
+    /* enable if PAL */
+    gtk_widget_set_sensitive(data->delayline, is_pal(chip));
+    row++;
 
     button = gtk_button_new_with_label("Reset");
     gtk_widget_set_halign(button, GTK_ALIGN_END);
-    gtk_grid_attach(GTK_GRID(grid), button, minimal ? 3 : 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), button, minimal ? 3 : 2, 0, 1, 1);
     g_signal_connect(button, "clicked", G_CALLBACK(on_reset_clicked), NULL);
 
     g_object_set_data(G_OBJECT(grid), "InternalState", (gpointer)data);
-    g_signal_connect(grid, "destroy", G_CALLBACK(on_widget_destroy), NULL);
+    g_signal_connect_unlocked(grid, "destroy", G_CALLBACK(on_widget_destroy), NULL);
 
     gtk_widget_show_all(grid);
     return grid;

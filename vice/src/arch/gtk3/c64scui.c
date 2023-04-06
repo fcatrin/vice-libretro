@@ -37,7 +37,6 @@
 #include "sampler.h"
 #include "ui.h"
 #include "uimachinewindow.h"
-#include "settings_sampler.h"
 #include "vicii.h"
 #include "videomodelwidget.h"
 #include "widgethelpers.h"
@@ -46,22 +45,8 @@
 #include "clockport.h"
 
 #include "cartridge.h"
-#include "reu.h"
-#include "reuwidget.h"
-#include "ramcartwidget.h"
-#include "dqbbwidget.h"
-#include "expertwidget.h"
-#include "isepicwidget.h"
-#include "gmod2widget.h"
-#include "mmcrwidget.h"
-#include "mmc64widget.h"
-#include "retroreplaywidget.h"
-#include "easyflashwidget.h"
-#include "rrnetmk3widget.h"
-#include "uicart.h"
 #include "carthelpers.h"
 #include "tapecart.h"
-#include "tapeportdeviceswidget.h"
 #include "settings_model.h"
 #include "c64ui.h"
 #include "crt.h"
@@ -79,7 +64,7 @@ static const char *c64_model_list[] = {
     "C64 SX PAL", "C64 SX NTSC",
     "Japanese", "C64 GS",
     "PET64 PAL", "PET64 NTSC",
-    "Ultimax", NULL };
+    "MAX Machine", NULL };
 
 
 /** \brief  List of VIC-II models
@@ -151,36 +136,9 @@ int c64scui_init(void)
     video_model_widget_set_resource("VICIIModel");
     video_model_widget_set_models(c64sc_vicii_models);
 
-    settings_sampler_set_devices_getter(sampler_get_devices);
-    /* work around VSID again */
-    clockport_device_widget_set_devices((void *)clockport_supported_devices);
-
-    /* I/O extension function pointers */
-    carthelpers_set_functions(
-            cartridge_save_image,
-            cartridge_flush_image,
-            cartridge_type_enabled,
-            cartridge_enable,
-            cartridge_disable);
-
-    /* uicart_set_detect_func(cartridge_detect); only cbm2/plus4 */
-    uicart_set_list_func(cartridge_get_info_list);
-    uicart_set_attach_func(cartridge_attach_image);
-    uicart_set_freeze_func(cartridge_trigger_freeze);
-    uicart_set_detach_func(cartridge_detach_image);
-    uicart_set_default_func(cartridge_set_default);
-    uicart_set_filename_func(cartridge_current_filename);
-    uicart_set_wipe_func(cartridge_wipe_filename);
-
-    /* set tapecart flush function */
-    tapeport_devices_widget_set_tapecart_flush_func(tapecart_flush_tcrt);
-
     /* set C64 model_get function */
     settings_model_widget_set_model_func(c64model_get);
 
-    /* crt preview widget functions */
-    crt_preview_widget_set_open_func(crt_open);
-    crt_preview_widget_set_chip_func(crt_read_chip_header);
     return 0;
 }
 

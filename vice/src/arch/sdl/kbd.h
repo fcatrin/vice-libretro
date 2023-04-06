@@ -32,7 +32,6 @@
 #include "uimenu.h"
 
 extern void kbd_arch_init(void);
-extern int kbd_arch_get_host_mapping(void);
 
 extern signed long kbd_arch_keyname_to_keynum(char *keyname);
 extern const char *kbd_arch_keynum_to_keyname(signed long keynum);
@@ -40,7 +39,7 @@ extern void kbd_initialize_numpad_joykeys(int *joykeys);
 
 #define KBD_PORT_PREFIX "sdl"
 
-#ifdef USE_SDLUI2
+#ifdef USE_SDL2UI
 #define SDLKey SDL_Keycode
 #define SDLMod SDL_Keymod
 #define SDLK_KP0 SDLK_KP_0
@@ -56,7 +55,7 @@ extern void kbd_initialize_numpad_joykeys(int *joykeys);
 #define KMOD_META KMOD_GUI
 #define SDLK_LMETA SDLK_LGUI
 #define SDLK_RMETA SDLK_RGUI
-#define SDLK_COMPOSE	SDLK_APPLICATION
+#define SDLK_COMPOSE SDLK_APPLICATION
 #define SDLK_PRINT SDLK_PRINTSCREEN
 #define SDLK_NUMLOCK SDLK_NUMLOCKCLEAR
 #define SDLK_SCROLLOCK SDLK_SCROLLLOCK
@@ -96,6 +95,8 @@ extern void kbd_focus_change(void);
 
 extern int sdl_ui_menukeys[];
 
-extern const char *kbd_get_menu_keyname(void);
+extern char *kbd_get_menu_keyname(void);
+
+extern char *kbd_get_path_keyname(char *path);
 
 #endif

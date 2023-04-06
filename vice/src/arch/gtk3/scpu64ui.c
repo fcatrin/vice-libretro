@@ -40,26 +40,10 @@
 #include "sampler.h"
 #include "ui.h"
 #include "uimachinewindow.h"
-#include "settings_sampler.h"
 
-#include "clockportdevicewidget.h"
 #include "clockport.h"
 
 #include "cartridge.h"
-#include "reu.h"
-#include "reuwidget.h"
-#include "ramcartwidget.h"
-#include "dqbbwidget.h"
-#include "expertwidget.h"
-#include "isepicwidget.h"
-#include "gmod2widget.h"
-#include "mmcrwidget.h"
-#include "mmc64widget.h"
-#include "retroreplaywidget.h"
-#include "easyflashwidget.h"
-#include "rrnetmk3widget.h"
-#include "carthelpers.h"
-#include "uicart.h"
 #include "c64model.h"
 #include "settings_model.h"
 
@@ -72,7 +56,7 @@
  */
 static const char *c64scpu_model_list[] = {
     "C64 PAL", "C64C PAL", "C64 old PAL",
-    "C64 NTSC", "C64C NTSC" "C64 old NTSC",
+    "C64 NTSC", "C64C NTSC", "C64 old NTSC",
     "Drean",
     "C64 SX PAL", "C64 SX NTSC",
     "Japanese", "C64 GS",
@@ -148,26 +132,6 @@ int scpu64ui_init(void)
     video_model_widget_set_title("VIC-II model");
     video_model_widget_set_resource("VICIIModel");
     video_model_widget_set_models(c64scpu_vicii_models);
-
-    settings_sampler_set_devices_getter(sampler_get_devices);
-    clockport_device_widget_set_devices((void *)clockport_supported_devices);
-
-    /* I/O extension function pointers */
-    carthelpers_set_functions(
-            cartridge_save_image,
-            cartridge_flush_image,
-            cartridge_type_enabled,
-            cartridge_enable,
-            cartridge_disable);
-
-    /* uicart_set_detect_func(cartridge_detect); only cbm2/plus4 */
-    uicart_set_list_func(cartridge_get_info_list);
-    uicart_set_attach_func(cartridge_attach_image);
-    uicart_set_freeze_func(cartridge_trigger_freeze);
-    uicart_set_detach_func(cartridge_detach_image);
-    uicart_set_default_func(cartridge_set_default);
-    uicart_set_filename_func(cartridge_current_filename);
-    uicart_set_wipe_func(cartridge_wipe_filename);
 
     /* set C64 model_get function */
     settings_model_widget_set_model_func(c64model_get);

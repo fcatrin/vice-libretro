@@ -40,6 +40,7 @@
 #include "export.h"
 #include "lib.h"
 #include "monitor.h"
+#include "ram.h"
 #include "snapshot.h"
 #include "types.h"
 #include "util.h"
@@ -131,18 +132,19 @@ static int pagefox_dump(void)
 /* ---------------------------------------------------------------------*/
 
 static io_source_t pagefox_device = {
-    CARTRIDGE_NAME_PAGEFOX,
-    IO_DETACH_CART,
-    NULL,
-    0xde80, 0xdeff, 0xff,
-    0,
-    pagefox_io1_store,
-    NULL,
-    pagefox_io1_peek,
-    pagefox_dump,
-    CARTRIDGE_PAGEFOX,
-    0,
-    0
+    CARTRIDGE_NAME_PAGEFOX, /* name of the device */
+    IO_DETACH_CART,         /* use cartridge ID to detach the device when involved in a read-collision */
+    IO_DETACH_NO_RESOURCE,  /* does not use a resource for detach */
+    0xde80, 0xdeff, 0xff,   /* range for the device, address is ignored, reg:$de80, mirrors:$de81-$deff */
+    0,                      /* read is never valid, reg is write only */
+    pagefox_io1_store,      /* store function */
+    NULL,                   /* NO poke function */
+    NULL,                   /* NO read function */
+    pagefox_io1_peek,       /* peek function */
+    pagefox_dump,           /* device state information dump function */
+    CARTRIDGE_PAGEFOX,      /* cartridge ID */
+    IO_PRIO_NORMAL,         /* normal priority, device read needs to be checked for collisions */
+    0                       /* insertion order, gets filled in by the registration function */
 };
 
 static io_source_list_t *pagefox_list_item = NULL;
@@ -190,6 +192,27 @@ void pagefox_romh_store(uint16_t addr, uint8_t value)
 
 /* ---------------------------------------------------------------------*/
 
+/* FIXME: this still needs to be tweaked to match the hardware */
+static RAMINITPARAM ramparam = {
+    .start_value = 255,
+    .value_invert = 2,
+    .value_offset = 1,
+
+    .pattern_invert = 0x100,
+    .pattern_invert_value = 255,
+
+    .random_start = 0,
+    .random_repeat = 0,
+    .random_chance = 0,
+};
+
+void pagefox_powerup(void)
+{
+    if (pagefox_ram) {
+        ram_init_with_pattern(pagefox_ram, PAGEFOX_RAMSIZE, &ramparam);
+    }
+}
+
 void pagefox_config_init(void)
 {
     pagefox_io1_store(0xde80, 0x00);
@@ -223,7 +246,9 @@ int pagefox_bin_attach(const char *filename, uint8_t *rawcart)
     if (util_file_load(filename, rawcart, 0x10000, UTIL_FILE_LOAD_SKIP_ADDRESS) < 0) {
         return -1;
     }
-    pagefox_ram = lib_malloc(PAGEFOX_RAMSIZE);
+    if (pagefox_ram == NULL) {
+        pagefox_ram = lib_malloc(PAGEFOX_RAMSIZE);
+    }
     return pagefox_common_attach();
 }
 
@@ -244,7 +269,9 @@ int pagefox_crt_attach(FILE *fd, uint8_t *rawcart)
             return -1;
         }
     }
-    pagefox_ram = lib_malloc(PAGEFOX_RAMSIZE);
+    if (pagefox_ram == NULL) {
+        pagefox_ram = lib_malloc(PAGEFOX_RAMSIZE);
+    }
     return pagefox_common_attach();
 }
 
@@ -254,6 +281,7 @@ void pagefox_detach(void)
     io_source_unregister(pagefox_list_item);
     pagefox_list_item = NULL;
     lib_free(pagefox_ram);
+    pagefox_ram = NULL;
 }
 
 /* ---------------------------------------------------------------------*/
@@ -269,7 +297,7 @@ void pagefox_detach(void)
    ARRAY | ROMH    |   0.0+  | 32768 BYTES of ROMH data
  */
 
-static char snap_module_name[] = "CARTPAGEFOX";
+static const char snap_module_name[] = "CARTPAGEFOX";
 #define SNAP_MAJOR   0
 #define SNAP_MINOR   1
 
@@ -308,13 +336,13 @@ int pagefox_snapshot_read_module(snapshot_t *s)
     }
 
     /* Do not accept versions higher than current */
-    if (vmajor > SNAP_MAJOR || vminor > SNAP_MINOR) {
+    if (snapshot_version_is_bigger(vmajor, vminor, SNAP_MAJOR, SNAP_MINOR)) {
         snapshot_set_error(SNAPSHOT_MODULE_HIGHER_VERSION);
         goto fail;
     }
 
     /* new in 0.1 */
-    if (SNAPVAL(vmajor, vminor, 0, 1)) {
+    if (!snapshot_version_is_smaller(vmajor, vminor, 0, 1)) {
         if (SMR_B_INT(m, &pagefox_enabled) < 0) {
             goto fail;
         }
@@ -330,6 +358,7 @@ int pagefox_snapshot_read_module(snapshot_t *s)
         || SMR_BA(m, roml_banks, 0x8000) < 0
         || SMR_BA(m, romh_banks, 0x8000) < 0) {
         lib_free(pagefox_ram);
+        pagefox_ram = NULL;
         goto fail;
     }
 

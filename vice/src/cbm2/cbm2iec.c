@@ -40,11 +40,6 @@ void cbm2iec_init(void)
 {
 }
 
-void iec_update_cpu_bus(BYTE data)
-{
-
-}
-
 void iec_update_ports(void)
 {
     /* Not used for now.  */
@@ -95,7 +90,7 @@ void iec_fast_drive_write(uint8_t data, unsigned int dnr)
 }
 
 
-#if (defined(DEBUG) || defined(WIN32_COMPILE) || defined(OS2_COMPILE))
+#ifdef DEBUG
 void debug_iec_drv_read(unsigned int data)
 {
     /* FIXME: unused */
@@ -133,3 +128,8 @@ void plus4tcbm_update_pc(uint8_t byte, unsigned int dnr)
 {
 }
 
+#ifdef __LIBRETRO__
+void iec_update_cpu_bus(uint8_t data)
+{
+}
+#endif

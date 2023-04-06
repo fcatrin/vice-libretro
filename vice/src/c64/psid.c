@@ -39,7 +39,6 @@
 #include "lib.h"
 #include "log.h"
 #include "machine.h"
-#include "patchrom.h"
 #include "psid.h"
 #include "resources.h"
 #include "types.h"
@@ -95,21 +94,24 @@ struct kernal_s {
     int rev;
 };
 
+/* NOTE: this table is duplicated in c64-cmdline-options.c */
 static struct kernal_s kernal_match[] = {
-    { "1", C64_KERNAL_REV1 },
-    { "2", C64_KERNAL_REV2 },
-    { "3", C64_KERNAL_REV3 },
-    { "67", C64_KERNAL_SX64 },
-    { "sx", C64_KERNAL_SX64 },
-    { "100", C64_KERNAL_4064 },
+    { "0",    C64_KERNAL_JAP },
+    { "jap",  C64_KERNAL_JAP },
+    { "1",    C64_KERNAL_REV1 },
+    { "2",    C64_KERNAL_REV2 },
+    { "3",    C64_KERNAL_REV3 },
+    { "67",   C64_KERNAL_SX64 },
+    { "sx",   C64_KERNAL_SX64 },
+    { "39",   C64_KERNAL_GS64 },
+    { "gs",   C64_KERNAL_GS64 },
+    { "100",  C64_KERNAL_4064 },
     { "4064", C64_KERNAL_4064 },
     { NULL, C64_KERNAL_UNKNOWN }
 };
 
 static int set_kernal_revision(const char *param, void *extra_param)
 {
-    uint16_t sum;                   /* ROM checksum */
-    int id;                     /* ROM identification number */
     int rev = C64_KERNAL_UNKNOWN;
     int i = 0;
 
@@ -124,24 +126,19 @@ static int set_kernal_revision(const char *param, void *extra_param)
         i++;
     } while ((rev == C64_KERNAL_UNKNOWN) && (kernal_match[i].name != NULL));
 
-    if(!c64rom_isloaded()) {
-        kernal_revision = rev;
-        return 0;
+    log_verbose("set_kernal_revision (\"-kernalrev\") val:'%s' rev: %d", param, rev);
+
+    if (rev == C64_KERNAL_UNKNOWN) {
+        log_error(LOG_DEFAULT, "invalid kernal revision (%d)", rev);
+        return -1;
     }
 
-    if (c64rom_get_kernal_chksum_id(&sum, &id) < 0) {
-        id = C64_KERNAL_UNKNOWN;
-        kernal_revision = id;
-    } else {
-        if (patch_rom_idx(rev) >= 0) {
-            kernal_revision = rev;
-        } else {
-            kernal_revision = id;
-        }
+    if (resources_set_int("KernalRev", rev) < 0) {
+        log_error(LOG_DEFAULT, "failed to set kernal revision (%d)", rev);
     }
+
     return 0;
 }
-
 
 static int set_keepenv(int val, void *param)
 {
@@ -209,7 +206,8 @@ static const cmdline_option_t cmdline_options[] =
       "<Name>", "Specify name of character generator ROM image" },
     { "-kernalrev", CALL_FUNCTION, CMDLINE_ATTRIB_NONE,
       set_kernal_revision, NULL, NULL, NULL,
-      "<Revision>", "Patch the Kernal ROM to the specified <revision> (1: rev. 1, 2: rev. 2, 3: rev. 3, 67/sx: sx64, 100/4064: 4064)" },
+      "<Revision>", "Patch the Kernal ROM to the specified <revision> "
+      "(0/jap: japanese 1: rev. 1, 2: rev. 2, 3: rev. 3, 39/gs: C64 GS, 67/sx: sx64, 100/4064: 4064)" },
     CMDLINE_LIST_END
 };
 
@@ -348,7 +346,7 @@ int psid_load_file(const char* filename)
     }
 
     if (!feof(f)) {
-        log_error(vlog, "More than 64K PSID data.");
+        log_error(vlog, "More than 64KiB PSID data.");
         goto fail;
     }
 
@@ -475,7 +473,10 @@ void psid_init_tune(int install_driver_hook)
 
     reloc_addr = psid->start_page << 8;
 
-    log_message(vlog, "Driver=$%04X, Image=$%04X-$%04X, Init=$%04X, Play=$%04X", reloc_addr, psid->load_addr, psid->load_addr + psid->data_size - 1, psid->init_addr, psid->play_addr);
+    log_message(vlog, "Driver=$%04X, Image=$%04X-$%04X, Init=$%04X, Play=$%04X",
+            reloc_addr, psid->load_addr,
+            (unsigned int)(psid->load_addr + psid->data_size - 1),
+            psid->init_addr, psid->play_addr);
 
     /* PAL/NTSC. */
     resources_get_int("MachineVideoStandard", &sync);
@@ -523,25 +524,29 @@ void psid_init_tune(int install_driver_hook)
     } else {
         if (machine_class == VICE_MACHINE_VSID) {
             char * driver_info_text;
-            driver_info_text = lib_msprintf("Driver=$%04X, Image=$%04X-$%04X, Init=$%04X, Play=$%04X", reloc_addr, psid->load_addr,
-                                            psid->load_addr + psid->data_size - 1, psid->init_addr, psid->play_addr);
+            driver_info_text = lib_msprintf("Driver=$%04X, Image=$%04X-$%04X, Init=$%04X, Play=$%04X",
+                                            reloc_addr, psid->load_addr,
+                                            psid->load_addr + psid->data_size - 1U,
+                                            psid->init_addr, psid->play_addr);
             vsid_ui_setdrv(driver_info_text);
+            lib_free(driver_info_text);
+
             vsid_ui_set_driver_addr(reloc_addr);
             vsid_ui_set_load_addr(psid->load_addr);
             vsid_ui_set_init_addr(psid->init_addr);
             vsid_ui_set_play_addr(psid->play_addr);
             vsid_ui_set_data_size(psid->data_size);
-            lib_free(driver_info_text);
+            vsid_ui_set_default_tune(psid->start_song);
+            vsid_ui_display_name((char *)(psid->name));
+            vsid_ui_display_author((char *)(psid->author));
+            vsid_ui_display_copyright((char *)(psid->copyright));
+            vsid_ui_display_sync(sync);
+            vsid_ui_display_sid_model(sid_model);
+            vsid_ui_display_irqtype(irq_str);
+            vsid_ui_display_nr_of_tunes(psid->songs);
+            vsid_ui_display_tune_nr(start_song);
+            vsid_ui_display_time(0);
         }
-        vsid_ui_display_name((char *)(psid->name));
-        vsid_ui_display_author((char *)(psid->author));
-        vsid_ui_display_copyright((char *)(psid->copyright));
-
-        vsid_ui_display_sync(sync);
-        vsid_ui_display_sid_model(sid_model);
-        vsid_ui_display_irqtype(irq_str);
-        vsid_ui_display_tune_nr(start_song);
-        vsid_ui_display_time(0);
     }
 
     /* Store parameters for PSID player. */
@@ -647,19 +652,19 @@ void psid_init_driver(void)
     resources_set_int("SidStereo", 0);
     if (psid->version >= 3) {
         sid2loc = 0xd000 | ((psid->reserved >> 4) & 0x0ff0);
-        log_message(vlog, "2nd SID at $%04x", sid2loc);
+        log_message(vlog, "2nd SID at $%04x", (unsigned int)sid2loc);
         if (((sid2loc >= 0xd420 && sid2loc < 0xd800) || sid2loc >= 0xde00)
             && (sid2loc & 0x10) == 0) {
             resources_set_int("SidStereo", 1);
-            resources_set_int("SidStereoAddressStart", sid2loc);
+            resources_set_int("Sid2AddressStart", sid2loc);
         }
         sid3loc = 0xd000 | ((psid->reserved << 4) & 0x0ff0);
         if (sid3loc != 0xd000) {
-            log_message(vlog, "3rd SID at $%04x", sid3loc);
+            log_message(vlog, "3rd SID at $%04x", (unsigned int)sid3loc);
             if (((sid3loc >= 0xd420 && sid3loc < 0xd800) || sid3loc >= 0xde00)
                 && (sid3loc & 0x10) == 0) {
                 resources_set_int("SidStereo", 2);
-                resources_set_int("SidTripleAddressStart", sid3loc);
+                resources_set_int("Sid3AddressStart", sid3loc);
             }
         }
     }
@@ -689,7 +694,8 @@ void psid_init_driver(void)
     /* Relocation of C64 PSID driver code. */
     reloc_addr = psid->start_page << 8;
     psid_size = sizeof(psid_driver);
-    log_message(vlog, "PSID free pages: $%04x-$%04x", reloc_addr, (reloc_addr + (psid->max_pages << 8)) -1);
+    log_message(vlog, "PSID free pages: $%04x-$%04x",
+            reloc_addr, (reloc_addr + (psid->max_pages << 8)) - 1U);
 
     if (!reloc65((char **)&psid_reloc, &psid_size, reloc_addr)) {
         log_error(vlog, "Relocation.");
@@ -742,7 +748,7 @@ unsigned int psid_increment_frames(void)
  * compute sidplayer (.mus/.str) support
  *
  * to minimize code duplication and to simplify the integration with the rest
- * of the code, the sidplayer data is simply converted into PSID like format 
+ * of the code, the sidplayer data is simply converted into PSID like format
  * at load time. heavily inspired by the respective code in libsidplay2.
  ******************************************************************************/
 
@@ -831,7 +837,7 @@ static const unsigned char *copystring(unsigned char *d, const unsigned char *s)
         ++s;
     }
     *d = 0;
-    charset_petconvstring(d, 1);
+    charset_petconvstring(d, CONVERT_TO_ASCII);
     return s + 1;
 }
 
@@ -865,8 +871,9 @@ static int mus_load_file(const char* filename, int ispsid)
 {
     char *strname;
     FILE *f;
-    int n, stereo = 0;
-    int mus_datalen;
+    int stereo = 0;
+    size_t n;
+    size_t mus_datalen;
 
     if (!(f = zfile_fopen(filename, MODE_READ))) {
         return -1;
@@ -892,7 +899,7 @@ static int mus_load_file(const char* filename, int ispsid)
     /* FIXME: the psid file format specification does not tell how to handle
               stereo sidplayer tunes when they are in psid format */
     if (!ispsid) {
-        strname = lib_stralloc(filename);
+        strname = lib_strdup(filename);
         n = strlen(strname) - 4;
         strcpy(strname + n, ".str");
 
@@ -906,7 +913,7 @@ static int mus_load_file(const char* filename, int ispsid)
         }
         lib_free(strname);
         /* only extract credits if this is NOT a psid file */
-        mus_extract_credits(psid->data, mus_datalen);
+        mus_extract_credits(psid->data, (int)mus_datalen);
     }
 
     mus_install();

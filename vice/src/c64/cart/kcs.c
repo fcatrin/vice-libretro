@@ -41,6 +41,7 @@
 #include "log.h"
 #include "maincpu.h"
 #include "monitor.h"
+#include "ram.h"
 #include "snapshot.h"
 #include "types.h"
 #include "util.h"
@@ -95,6 +96,8 @@
  *      !EXROM Q3 <- D3  74LS02 pin13
  *
  */
+
+#define CART_RAM_SIZE 128
 
 static int config;
 
@@ -153,33 +156,35 @@ static int kcs_io1_dump(void)
 /* ---------------------------------------------------------------------*/
 
 static io_source_t kcs_io1_device = {
-    CARTRIDGE_NAME_KCS_POWER,
-    IO_DETACH_CART,
-    NULL,
-    0xde00, 0xdeff, 0xff,
-    1, /* read is always valid */
-    kcs_io1_store,
-    kcs_io1_read,
-    kcs_io1_peek,
-    kcs_io1_dump,
-    CARTRIDGE_KCS_POWER,
-    0,
-    0
+    CARTRIDGE_NAME_KCS_POWER, /* name of the device */
+    IO_DETACH_CART,           /* use cartridge ID to detach the device when involved in a read-collision */
+    IO_DETACH_NO_RESOURCE,    /* does not use a resource for detach */
+    0xde00, 0xdeff, 0xff,     /* range for the device, regs:$de00-$deff */
+    1,                        /* read is always valid */
+    kcs_io1_store,            /* store function */
+    NULL,                     /* NO poke function */
+    kcs_io1_read,             /* read function */
+    kcs_io1_peek,             /* peek function */
+    kcs_io1_dump,             /* device state information dump function */
+    CARTRIDGE_KCS_POWER,      /* cartridge ID */
+    IO_PRIO_NORMAL,           /* normal priority, device read needs to be checked for collisions */
+    0                         /* insertion order, gets filled in by the registration function */
 };
 
 static io_source_t kcs_io2_device = {
-    CARTRIDGE_NAME_KCS_POWER,
-    IO_DETACH_CART,
-    NULL,
-    0xdf00, 0xdfff, 0xff,
-    1, /* read is always valid */
-    kcs_io2_store,
-    kcs_io2_read,
-    kcs_io2_peek,
-    NULL, /* TODO: dump */
-    CARTRIDGE_KCS_POWER,
-    0,
-    0
+    CARTRIDGE_NAME_KCS_POWER, /* name of the device */
+    IO_DETACH_CART,           /* use cartridge ID to detach the device when involved in a read-collision */
+    IO_DETACH_NO_RESOURCE,    /* does not use a resource for detach */
+    0xdf00, 0xdfff, 0xff,     /* range for the device, regs:$df00-$dfff */
+    1,                        /* read is always valid */
+    kcs_io2_store,            /* store function */
+    NULL,                     /* NO poke function */
+    kcs_io2_read,             /* read function */
+    kcs_io2_peek,             /* peek function */
+    NULL,                     /* TODO: device state information dump function */
+    CARTRIDGE_KCS_POWER,      /* cartridge ID */
+    IO_PRIO_NORMAL,           /* normal priority, device read needs to be checked for collisions */
+    0                         /* insertion order, gets filled in by the registration function */
 };
 
 static io_source_list_t *kcs_io1_list_item = NULL;
@@ -212,6 +217,25 @@ void kcs_config_setup(uint8_t *rawcart)
 }
 
 /* ---------------------------------------------------------------------*/
+
+/* FIXME: this still needs to be tweaked to match the hardware */
+static RAMINITPARAM ramparam = {
+    .start_value = 255,
+    .value_invert = 2,
+    .value_offset = 1,
+
+    .pattern_invert = 0x100,
+    .pattern_invert_value = 255,
+
+    .random_start = 0,
+    .random_repeat = 0,
+    .random_chance = 0,
+};
+
+void kcs_powerup(void)
+{
+    ram_init_with_pattern(export_ram0, CART_RAM_SIZE, &ramparam);
+}
 
 static int kcs_common_attach(void)
 {
@@ -277,7 +301,7 @@ void kcs_detach(void)
 Note: in snapshots before 0.3 the RAM size was 8192.
  */
 
-static char snap_module_name[] = "CARTKCS";
+static const char snap_module_name[] = "CARTKCS";
 #define SNAP_MAJOR   0
 #define SNAP_MINOR   3
 
@@ -316,20 +340,20 @@ int kcs_snapshot_read_module(snapshot_t *s)
     }
 
     /* Do not accept versions higher than current */
-    if (vmajor > SNAP_MAJOR || vminor > SNAP_MINOR) {
+    if (snapshot_version_is_bigger(vmajor, vminor, SNAP_MAJOR, SNAP_MINOR)) {
         snapshot_set_error(SNAPSHOT_MODULE_HIGHER_VERSION);
         goto fail;
     }
 
     /* added in 0.1, removed in 0.3 */
-    if (SNAPVAL(vmajor, vminor, 0, 1) && !SNAPVAL(vmajor, vminor, 0, 3)) {
+    if (!snapshot_version_is_smaller(vmajor, vminor, 0, 1) && snapshot_version_is_smaller(vmajor, vminor, 0, 3)) {
         if (SMR_B(m, &dummy) < 0) {
             goto fail;
         }
     }
 
     /* new in 0.2 */
-    if (SNAPVAL(vmajor, vminor, 0, 2)) {
+    if (!snapshot_version_is_smaller(vmajor, vminor, 0, 2)) {
         if (SMR_B_INT(m, &config) < 0) {
             goto fail;
         }
@@ -344,7 +368,7 @@ int kcs_snapshot_read_module(snapshot_t *s)
     }
 
     /* 0x80 in 0.3, 0x2000 before that */
-    if (SNAPVAL(vmajor, vminor, 0, 3)) {
+    if (!snapshot_version_is_smaller(vmajor, vminor, 0, 3)) {
         if (SMR_BA(m, export_ram0, 128) < 0) {
             goto fail;
         }

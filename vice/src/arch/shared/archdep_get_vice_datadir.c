@@ -26,36 +26,46 @@
  */
 
 #include "vice.h"
-
-#include <stdlib.h>
-
 #include "archdep_defs.h"
+
+#include <stddef.h>
+
 #include "archdep_boot_path.h"
-#include "archdep_join_paths.h"
+#include "archdep_is_macos_bindist.h"
 #include "archdep_user_config_path.h"
+#include "lib.h"
+#include "util.h"
 
 #include "archdep_get_vice_datadir.h"
 
 
-/** \brief  Get the absolute path to the directory that contains GUI data
+/** \brief  Get the absolute path to the VICE data directory
  *
- * \return  Path to the gui data directory
+ * \return  Path to VICE data directory (typically /usr/local/share/vice)
+ *
+ * \note    Free result after use with lib_free().
  */
 char *archdep_get_vice_datadir(void)
 {
     char *path;
-#ifdef ARCHDEP_OS_UNIX
-# ifdef MACOSX_BUNDLE
-    /* FIXME: this needs to point to a dir inside the bundle, possibly
-       with a fallback for developer testing */
-    path = archdep_join_paths(archdep_user_config_path(), "gui", NULL);
-    /* debug_gtk("FIXME: archdep_get_vice_datadir '%s'.", path); */
+
+#ifdef WINDOWS_COMPILE
+# if defined(USE_SDLUI) || defined(USE_SDL2UI) || defined(USE_HEADLESSUI)
+    path = lib_strdup(archdep_boot_path());
+# elif defined(USE_GTK3UI)
+    path = util_join_paths(archdep_boot_path(), "..", NULL);
 # else
-    path = archdep_join_paths(LIBDIR, "gui", NULL);
+    /* any new UI should add code here to avoid build errors */
 # endif
+#elif defined(MACOS_COMPILE)
+    if (archdep_is_macos_bindist()) {
+        path = util_join_paths(archdep_boot_path(), "..", "share", "vice", NULL);
+    } else {
+        path = lib_strdup(VICE_DATADIR);
+    }
 #else
-    /* windows */
-    path = archdep_join_paths(archdep_boot_path(), "gui", NULL);
+    /* TODO: Add proper implementation for Haiku using /boot/[system|home]/packages/vice */
+    path = lib_strdup(VICE_DATADIR);
 #endif
     return path;
 }

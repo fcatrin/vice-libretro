@@ -11,18 +11,18 @@
  * Copyright (c) 2010, Pieter Noordhuis <pcnoordhuis at gmail dot com>
  *
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
  * met:
- * 
+ *
  *  *  Redistributions of source code must retain the above copyright
  *     notice, this list of conditions and the following disclaimer.
  *
  *  *  Redistributions in binary form must reproduce the above copyright
  *     notice, this list of conditions and the following disclaimer in the
  *     documentation and/or other materials provided with the distribution.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
  * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
  * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -41,22 +41,26 @@
 
 #include "vice.h"
 
+/** \brief  Linenoise completions object
+ *
+ * This documentation block is purely guess work.
+ */
 typedef struct linenoiseCompletions {
-  size_t len;
-  char **cvec;
+  size_t len;   /**< probably max or current number of completions in /c cvec */
+  char **cvec;  /**< list of completions */
 } linenoiseCompletions;
 
 struct console_private_s;
 
 typedef void(linenoiseCompletionCallback)(const char *, linenoiseCompletions *);
-void linenoiseSetCompletionCallback(linenoiseCompletionCallback *);
-void linenoiseAddCompletion(linenoiseCompletions *, char *);
+void vte_linenoiseSetCompletionCallback(linenoiseCompletionCallback *);
+void vte_linenoiseAddCompletion(linenoiseCompletions *, char *);
 
-char *linenoise(const char *prompt, struct console_private_s *term);
-int linenoiseHistoryAdd(const char *line);
-int linenoiseHistorySetMaxLen(int len);
-int linenoiseHistorySave(char *filename);
-int linenoiseHistoryLoad(char *filename);
-void linenoiseClearScreen(struct console_private_s *term);
+char *vte_linenoise(const char *prompt, struct console_private_s *term);
+int vte_linenoiseHistoryAdd(const char *line);
+int vte_linenoiseHistorySetMaxLen(int len);
+int vte_linenoiseHistorySave(char *filename);
+int vte_linenoiseHistoryLoad(char *filename);
+void vte_linenoiseClearScreen(struct console_private_s *term);
 
 #endif /* __LINENOISE_H */

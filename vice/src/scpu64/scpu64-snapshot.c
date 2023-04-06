@@ -30,6 +30,7 @@
 
 #include <stdio.h>
 
+#include "archdep.h"
 #include "scpu64-snapshot.h"
 #include "scpu64.h"
 #include "scpu64gluelogic.h"
@@ -37,7 +38,7 @@
 #include "cia.h"
 #include "drive-snapshot.h"
 #include "drive.h"
-#include "ioutil.h"
+#include "serial.h"
 #include "joyport.h"
 #include "joystick.h"
 #include "keyboard.h"
@@ -53,14 +54,14 @@
 #include "vice-event.h"
 #include "vicii.h"
 
-#define SNAP_MAJOR 1
-#define SNAP_MINOR 1
+#define SNAP_MAJOR 2
+#define SNAP_MINOR 0
 
-int scpu64_snapshot_write_to_stream(snapshot_stream_t *stream, int save_roms, int save_disks, int event_mode)
+int scpu64_snapshot_write(const char *name, int save_roms, int save_disks, int event_mode)
 {
     snapshot_t *s;
 
-    s = snapshot_create_from_stream(stream, ((uint8_t)(SNAP_MAJOR)), ((uint8_t)(SNAP_MINOR)), machine_get_name());
+    s = snapshot_create(name, ((uint8_t)(SNAP_MAJOR)), ((uint8_t)(SNAP_MINOR)), machine_get_name());
     if (s == NULL) {
         return -1;
     }
@@ -76,6 +77,7 @@ int scpu64_snapshot_write_to_stream(snapshot_stream_t *stream, int save_roms, in
         || ciacore_snapshot_write_module(machine_context.cia2, s) < 0
         || sid_snapshot_write_module(s) < 0
         || drive_snapshot_write_module(s, save_disks, save_roms) < 0
+        || fsdrive_snapshot_write_module(s) < 0
         || vicii_snapshot_write_module(s) < 0
         || scpu64_glue_snapshot_write_module(s) < 0
         || event_snapshot_write_module(s, event_mode) < 0
@@ -83,41 +85,26 @@ int scpu64_snapshot_write_to_stream(snapshot_stream_t *stream, int save_roms, in
         || joyport_snapshot_write_module(s, JOYPORT_1) < 0
         || joyport_snapshot_write_module(s, JOYPORT_2) < 0
         || userport_snapshot_write_module(s) < 0) {
-        snapshot_free(s);
+        snapshot_close(s);
+        archdep_remove(name);
         return -1;
     }
 
-    snapshot_free(s);
+    snapshot_close(s);
     return 0;
 }
 
-int scpu64_snapshot_write(const char *name, int save_roms, int save_disks, int event_mode)
-{
-    snapshot_stream_t *stream;
-    int res;
-
-    stream = snapshot_file_write_fopen(name);
-    res = scpu64_snapshot_write_to_stream(stream, save_roms, save_disks, event_mode);
-    if (res) {
-        snapshot_fclose_erase(stream);
-    } else if (snapshot_fclose(stream) == EOF) {
-        snapshot_set_error(SNAPSHOT_WRITE_CLOSE_EOF_ERROR);
-        res = -1;
-    }
-    return res;
-}
-
-int scpu64_snapshot_read_from_stream(snapshot_stream_t *stream, int event_mode)
+int scpu64_snapshot_read(const char *name, int event_mode)
 {
     snapshot_t *s;
     uint8_t minor, major;
 
-    s = snapshot_open_from_stream(stream, &major, &minor, machine_get_name());
+    s = snapshot_open(name, &major, &minor, machine_get_name());
     if (s == NULL) {
         return -1;
     }
 
-    if (major != SNAP_MAJOR || minor != SNAP_MINOR) {
+    if (!snapshot_version_is_equal(major, minor, SNAP_MAJOR, SNAP_MINOR)) {
         log_error(LOG_DEFAULT, "Snapshot version (%d.%d) not valid: expecting %d.%d.", major, minor, SNAP_MAJOR, SNAP_MINOR);
         snapshot_set_error(SNAPSHOT_MODULE_INCOMPATIBLE);
         goto fail;
@@ -133,6 +120,7 @@ int scpu64_snapshot_read_from_stream(snapshot_stream_t *stream, int event_mode)
         || ciacore_snapshot_read_module(machine_context.cia2, s) < 0
         || sid_snapshot_read_module(s) < 0
         || drive_snapshot_read_module(s) < 0
+        || fsdrive_snapshot_read_module(s) < 0
         || vicii_snapshot_read_module(s) < 0
         || scpu64_glue_snapshot_read_module(s) < 0
         || event_snapshot_read_module(s, event_mode) < 0
@@ -143,7 +131,7 @@ int scpu64_snapshot_read_from_stream(snapshot_stream_t *stream, int event_mode)
         goto fail;
     }
 
-    snapshot_free(s);
+    snapshot_close(s);
 
     sound_snapshot_finish();
 
@@ -151,21 +139,10 @@ int scpu64_snapshot_read_from_stream(snapshot_stream_t *stream, int event_mode)
 
 fail:
     if (s != NULL) {
-        snapshot_free(s);
+        snapshot_close(s);
     }
 
     machine_trigger_reset(MACHINE_RESET_MODE_SOFT);
 
     return -1;
-}
-
-int scpu64_snapshot_read(const char *name, int event_mode)
-{
-    snapshot_stream_t *stream;
-    int res;
-
-    stream = snapshot_file_read_fopen(name);
-    res = scpu64_snapshot_read_from_stream(stream, event_mode);
-    snapshot_fclose(stream);
-    return res;
 }

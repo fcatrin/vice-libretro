@@ -31,21 +31,17 @@
  */
 
 #include "vice.h"
+#include "debug.h"
+
+#ifdef DEBUG
+
 #include <gtk/gtk.h>
 
-#include <stdio.h>
-#include <string.h>
-#include <gtk/gtk.h>
-
-#include "basedialogs.h"
-#include "basewidgets.h"
 #include "debug_gtk3.h"
-#include "drive.h"
-#include "machine.h"
 #include "resources.h"
 #include "ui.h"
-#include "vsync.h"
-#include "widgethelpers.h"
+#include "uiactions.h"
+#include "vice_gtk3.h"
 
 #include "uidebug.h"
 
@@ -96,10 +92,16 @@ static GtkWidget *create_trace_widget(void)
     GtkWidget *grid;
     GtkWidget *group;
 
-    grid = uihelpers_create_grid_with_label("Select CPU/Drive trace mode", 1);
+    grid = vice_gtk3_grid_new_spaced_with_label(
+            -1, -1,
+            "Select CPU/Drive trace mode",
+            1);
     group = vice_gtk3_resource_radiogroup_new("TraceMode", trace_modes,
             GTK_ORIENTATION_VERTICAL);
-    g_object_set(group, "margin-left", 16, NULL);
+    gtk_widget_set_margin_top(group, 16);
+    gtk_widget_set_margin_start(group, 16);
+    gtk_widget_set_margin_end(group, 16);
+    gtk_widget_set_margin_bottom(group, 16);
     gtk_grid_attach(GTK_GRID(grid), group, 0, 1, 1, 1);
 
     gtk_widget_show_all(grid);
@@ -108,8 +110,6 @@ static GtkWidget *create_trace_widget(void)
 
 
 /** \brief  Create dialog to control trace mode
- *
- * \param[in]   parent  parent widget
  *
  * \return  GtkDialog
  */
@@ -124,6 +124,11 @@ static GtkWidget *create_trace_mode_dialog(void)
             NULL);
 
     content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    gtk_widget_set_margin_top(content, 16);
+    gtk_widget_set_margin_start(content, 16);
+    gtk_widget_set_margin_end(content, 16);
+    gtk_widget_set_margin_bottom(content, 16);
+
     gtk_container_add(GTK_CONTAINER(content), create_trace_widget());
 
     return dialog;
@@ -131,8 +136,6 @@ static GtkWidget *create_trace_mode_dialog(void)
 
 
 /** \brief  Create dialog to control playback frames
- *
- * \param[in]   parent  parent widget
  *
  * \return  GtkDialog
  */
@@ -153,11 +156,24 @@ static GtkWidget *create_playback_frames_dialog(void)
 }
 
 
+/** \brief  Handler for the 'destroy' event of the dialogs
+ *
+ * Signals the UI actions system the action has finished.
+ *
+ * \param[in]   dialog  dialog (unused)
+ * \param[in]   action  UI action ID
+ */
+static void on_destroy(GtkWidget *dialog, gpointer action)
+{
+    ui_action_finish(GPOINTER_TO_INT(action));
+}
+
+
 /** \brief  Handler for the 'response' event of the trace mode dialog
  *
  * \param[in,out]   dialog      dialog triggering the event
  * \param[in]       response_id response ID
- * \param[in]       extra event data (unused)
+ * \param[in]       data        extra event data (unused)
  */
 static void on_response_trace_mode(GtkDialog *dialog,
                                    gint response_id,
@@ -174,7 +190,7 @@ static void on_response_trace_mode(GtkDialog *dialog,
  *
  * \param[in,out]   dialog      dialog triggering the event
  * \param[in]       response_id response ID
- * \param[in]       extra event data (unused)
+ * \param[in]       data        extra event data (unused)
  */
 static void on_response_playback_frames(GtkDialog *dialog,
                                         gint response_id,
@@ -187,35 +203,41 @@ static void on_response_playback_frames(GtkDialog *dialog,
 }
 
 
-
-/** \brief  Callback for the 'Debug' -> 'Trace mode' menu item
- *
- * \param[in]   widget      parent widget (ignored)
- * \param[in]   user_data   extra data for the callback
+/** \brief  Show dialog to set trace mode
  */
-void uidebug_trace_mode_callback(GtkWidget *widget, gpointer user_data)
+void ui_debug_trace_mode_dialog_show(void)
 {
     GtkWidget *dialog;
 
     dialog = create_trace_mode_dialog();
-    g_signal_connect(dialog, "response",
-            G_CALLBACK(on_response_trace_mode), NULL);
+    g_signal_connect(dialog,
+                     "response",
+                     G_CALLBACK(on_response_trace_mode),
+                     NULL);
+    g_signal_connect(dialog,
+                     "destroy",
+                     G_CALLBACK(on_destroy),
+                     GINT_TO_POINTER(ACTION_DEBUG_TRACE_MODE));
     gtk_widget_show_all(dialog);
 }
 
 
-/** \brief  Callback for the 'Debug' -> 'Autoplay playback frames' menu item
-*
-* \param[in]   widget      parent widget (ignored)
-* \param[in]   user_data   extra data for the callback
+/** \brief  Show 'Autoplay playback frames' dialog
 */
-void uidebug_playback_frames_callback(GtkWidget *widget, gpointer user_data)
+void ui_debug_playback_frames_dialog_show(void)
 {
     GtkWidget *dialog;
 
     dialog = create_playback_frames_dialog();
-    g_signal_connect(dialog, "response",
-            G_CALLBACK(on_response_playback_frames), NULL);
+    g_signal_connect(dialog,
+                     "response",
+                     G_CALLBACK(on_response_playback_frames),
+                     NULL);
+    g_signal_connect(dialog,
+                     "destroy",
+                     G_CALLBACK(on_destroy),
+                     GINT_TO_POINTER(ACTION_DEBUG_AUTOPLAYBACK_FRAMES));
     gtk_widget_show_all(dialog);
-
 }
+
+#endif

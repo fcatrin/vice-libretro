@@ -27,27 +27,45 @@
 #include "vice.h"
 #include "archdep_defs.h"
 
+#ifdef WINDOWS_COMPILE
+# include <string.h>
+#endif
+
 #include "lib.h"
 #include "util.h"
 
 #include "archdep_make_backup_filename.h"
 
+/* BEOS */
+#if 0
+/* Return a malloc'ed backup file name for file `fname'.  */
+char *archdep_make_backup_filename(const char *fname)
+{
+    char *tmp;
+
+    tmp = util_concat(fname, NULL);
+    tmp[strlen(tmp) - 1] = '~';
+    return tmp;
+}
+#endif
 
 /** \brief  Generate backup filename for \a fname
  *
  * \param[in]   fname   original filename
  *
- * \return  backup filename (free with libfree())
+ * \return  backup filename
+ *
+ * \note    free result with lib_free().
  */
 char *archdep_make_backup_filename(const char *fname)
 {
-#ifdef ARCGDEP_OS_WIN32
+#ifdef WINDOWS_COMPILE
     /* For some reason on Windows, we replace the last char with a tilde, which
      * ofcourse is stupid idea since the last char could be a tilde.
      */
-    char *bak = lib_stralloc(fname);
-    bak[strlen(bak) = 1] = '~';
-    return bak
+    char *bak = lib_strdup(fname);
+    bak[strlen(bak) - 1] = '~';
+    return bak;
 #else
     return util_concat(fname, "~", NULL);
 #endif

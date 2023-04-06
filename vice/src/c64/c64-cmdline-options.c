@@ -39,7 +39,6 @@
 #include "cmdline.h"
 #include "log.h"
 #include "machine.h"
-#include "patchrom.h"
 #include "resources.h"
 #include "vicii.h"
 
@@ -157,21 +156,24 @@ struct kernal_s {
     int rev;
 };
 
+/* NOTE: this table is duplicated in psid.c */
 static struct kernal_s kernal_match[] = {
-    { "1", C64_KERNAL_REV1 },
-    { "2", C64_KERNAL_REV2 },
-    { "3", C64_KERNAL_REV3 },
-    { "67", C64_KERNAL_SX64 },
-    { "sx", C64_KERNAL_SX64 },
-    { "100", C64_KERNAL_4064 },
+    { "0",    C64_KERNAL_JAP },
+    { "jap",  C64_KERNAL_JAP },
+    { "1",    C64_KERNAL_REV1 },
+    { "2",    C64_KERNAL_REV2 },
+    { "3",    C64_KERNAL_REV3 },
+    { "67",   C64_KERNAL_SX64 },
+    { "sx",   C64_KERNAL_SX64 },
+    { "39",   C64_KERNAL_GS64 },
+    { "gs",   C64_KERNAL_GS64 },
+    { "100",  C64_KERNAL_4064 },
     { "4064", C64_KERNAL_4064 },
     { NULL, C64_KERNAL_UNKNOWN }
 };
 
 static int set_kernal_revision(const char *param, void *extra_param)
 {
-    uint16_t sum;                   /* ROM checksum */
-    int id;                     /* ROM identification number */
     int rev = C64_KERNAL_UNKNOWN;
     int i = 0;
 
@@ -186,21 +188,17 @@ static int set_kernal_revision(const char *param, void *extra_param)
         i++;
     } while ((rev == C64_KERNAL_UNKNOWN) && (kernal_match[i].name != NULL));
 
-    if(!c64rom_isloaded()) {
-        kernal_revision = rev;
-        return 0;
+    log_verbose("set_kernal_revision (\"-kernalrev\") val:'%s' rev: %d", param, rev);
+
+    if (rev == C64_KERNAL_UNKNOWN) {
+        log_error(LOG_DEFAULT, "invalid kernal revision (%d)", rev);
+        return -1;
     }
 
-    if (c64rom_get_kernal_chksum_id(&sum, &id) < 0) {
-        id = C64_KERNAL_UNKNOWN;
-        kernal_revision = id;
-    } else {
-        if (patch_rom_idx(rev) >= 0) {
-            kernal_revision = rev;
-        } else {
-            kernal_revision = id;
-        }
+    if (resources_set_int("KernalRev", rev) < 0) {
+        log_error(LOG_DEFAULT, "failed to set kernal revision (%d)", rev);
     }
+
     return 0;
 }
 
@@ -229,7 +227,8 @@ static const cmdline_option_t cmdline_options[] =
       "<Name>", "Specify name of character generator ROM image" },
     { "-kernalrev", CALL_FUNCTION, CMDLINE_ATTRIB_NEED_ARGS,
       set_kernal_revision, NULL, NULL, NULL,
-      "<Revision>", "Patch the Kernal ROM to the specified <revision> (1: rev. 1, 2: rev. 2, 3: rev. 3, 67/sx: sx64, 100/4064: 4064)" },
+      "<Revision>", "Patch the Kernal ROM to the specified <revision> "
+      "(0/jap: japanese 1: rev. 1, 2: rev. 2, 3: rev. 3, 39/gs: C64 GS, 67/sx: sx64, 100/4064: 4064)" },
 #if defined(HAVE_RS232DEV) || defined(HAVE_RS232NET)
     { "-acia1", SET_RESOURCE, CMDLINE_ATTRIB_NONE,
       NULL, NULL, "Acia1Enable", (void *)1,

@@ -22,6 +22,9 @@
 #include "WaveformCalculator.h"
 
 #ifdef __LIBRETRO__
+#ifdef __PS3__
+#include "PS3_include.h"
+#endif
 #else
 #include <cmath>
 #endif

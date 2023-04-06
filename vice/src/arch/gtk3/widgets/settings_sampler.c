@@ -35,18 +35,14 @@
 
 #include <gtk/gtk.h>
 
-#include "widgethelpers.h"
 #include "debug_gtk3.h"
+#include "openfiledialog.h"
 #include "resources.h"
 #include "sampler.h"
-#include "openfiledialog.h"
+#include "ui.h"
+#include "widgethelpers.h"
 
 #include "settings_sampler.h"
-
-
-/** \brief  Function to retrieve the list of sampler input devices
- */
-static sampler_device_t *(*devices_getter)(void) = NULL;
 
 
 /** \brief  Reference to the text entry
@@ -71,7 +67,6 @@ static void on_device_changed(GtkComboBoxText *combo, gpointer user_data)
 {
     int index = gtk_combo_box_get_active(GTK_COMBO_BOX(combo));
 
-    debug_gtk3("setting SamplerDevice to %d.", index);
     resources_set_int("SamplerDevice", index);
 
     /* this assumes the "media file input" is always first in the list */
@@ -89,7 +84,6 @@ static void on_gain_changed(GtkScale *scale, gpointer user_data)
 {
     int value = (int)gtk_range_get_value(GTK_RANGE(scale));
 
-    debug_gtk3("setting SamplerGain to %d.", value);
     resources_set_int("SamplerGain", value);
 }
 
@@ -104,25 +98,46 @@ static void on_entry_changed(GtkEntry *entry, gpointer user_data)
     const char *text;
 
     text = gtk_entry_get_text(entry);
-    debug_gtk3("setting SampleName to '%s'.", text);
     resources_set_string("SampleName", text);
 }
 
+
+/** \brief  Callback for the file selection dialog
+ *
+ * \param[in]       dialog      file selection dialog (unused)
+ * \param[in,out]   filename    sampler input file
+ * \param[in]       data        extra event data (unused)
+ *
+ * \todo    Replace with resourcebrowser widget
+ */
+static void browse_filename_callback(GtkDialog *dialog,
+                                     gchar *filename,
+                                     gpointer data)
+{
+    if (filename != NULL) {
+        gtk_entry_set_text(GTK_ENTRY(entry_widget), filename);
+        g_free(filename);
+    }
+    gtk_widget_destroy(GTK_WIDGET(dialog));
+}
 
 /** \brief  Handler for the "clicked" event of the "browse" button
  *
  * \param[in]   widget      browse button
  * \param[in]   user_data   extra data (unused)
+ *
+ * \todo    Replace with resourcebrowser widget
  */
 static void on_browse_clicked(GtkWidget *widget, gpointer user_data)
 {
-    gchar *filename;
+    GtkWidget *dialog;
 
-    filename = vice_gtk3_open_file_dialog("Select input file", NULL, NULL, NULL);
-    if (filename != NULL) {
-        gtk_entry_set_text(GTK_ENTRY(entry_widget), filename);
-        g_free(filename);
-    }
+    dialog = vice_gtk3_open_file_dialog(
+            "Select input file",
+            NULL, NULL, NULL,
+            browse_filename_callback,
+            NULL);
+    gtk_widget_show(dialog);
 }
 
 
@@ -140,11 +155,14 @@ static GtkWidget *create_device_widget(void)
     resources_get_int("SamplerDevice", &current);
 
     combo = gtk_combo_box_text_new();
+#if 0
     if (devices_getter != NULL) {
         devices = devices_getter();
     } else {
         return combo;
     }
+#endif
+    devices = sampler_get_devices();
     for (i = 0; devices[i].name != NULL; i++) {
         gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(combo),
                 devices[i].name, devices[i].name);
@@ -170,7 +188,7 @@ static GtkWidget *create_gain_widget(void)
     int i;
 
     label = gtk_label_new("Sampler gain");
-    g_object_set(label, "margin-left",16, NULL);
+    gtk_widget_set_margin_start(label, 16);
 
     scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,
             0.0, 200.0, 25.0);
@@ -210,7 +228,6 @@ static GtkWidget *create_input_entry(void)
     if (text != NULL) {
         gtk_entry_set_text(GTK_ENTRY(entry), text);
     }
-
     g_signal_connect(entry, "changed", G_CALLBACK(on_entry_changed), NULL);
     return entry;
 }
@@ -230,21 +247,13 @@ static GtkWidget *create_input_button(void)
 }
 
 
-/** \brief  Set the function to retrieve the input devices list
- *
- * \param[in]   func    pointer to function to retrieve devices list
- */
-void settings_sampler_set_devices_getter(sampler_device_t *(func)(void))
-{
-    devices_getter = func;
-}
-
-
 /** \brief  Create widget to control sampler settings
  *
  * \param[in]   parent  parent widget
  *
  * \return  GtkGrid
+ *
+ * \todo    Use resourcebrowser to control the "SampleFile" resource
  */
 GtkWidget *settings_sampler_widget_create(GtkWidget *parent)
 {
@@ -253,13 +262,12 @@ GtkWidget *settings_sampler_widget_create(GtkWidget *parent)
     GtkWidget *combo;
     int index;
 
-    grid = uihelpers_create_grid_with_label("Sampler settings", 3);
-    gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
+    grid = vice_gtk3_grid_new_spaced_with_label(-1, -1, "Sampler settings", 3);
 
     /* sampler device list */
     label = gtk_label_new("Sampler device");
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    g_object_set(label, "margin-left", 16, NULL);
+    gtk_widget_set_margin_start(label, 16);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 1, 1, 1);
     combo = create_device_widget();
     gtk_grid_attach(GTK_GRID(grid), combo, 1, 1, 2, 1);
@@ -267,14 +275,14 @@ GtkWidget *settings_sampler_widget_create(GtkWidget *parent)
     /* sampler gain */
     label = gtk_label_new("Sampler gain");
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    g_object_set(label, "margin-left", 16, NULL);
+    gtk_widget_set_margin_start(label, 16);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 2, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), create_gain_widget(), 1, 2, 2, 1);
 
     /* sampler input file text entry and browse button */
     label = gtk_label_new("Sampler media file");
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    g_object_set(label, "margin-left", 16, NULL);
+    gtk_widget_set_margin_start(label, 16);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 3, 1, 1);
     entry_widget = create_input_entry();
     gtk_widget_set_hexpand(entry_widget, TRUE);

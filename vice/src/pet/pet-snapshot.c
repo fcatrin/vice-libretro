@@ -31,21 +31,21 @@
 #include <stdio.h>
 
 #include "6809.h"
+#include "archdep.h"
 #include "crtc.h"
 #include "drive-snapshot.h"
-#include "ioutil.h"
 #include "joystick.h"
 #include "keyboard.h"
 #include "log.h"
 #include "machine.h"
 #include "maincpu.h"
-#include "pet-snapshot.h"
 #include "pet.h"
 #include "petacia.h"
 #include "petdww.h"
 #include "petmemsnapshot.h"
 #include "petpia.h"
 #include "pets.h"
+#include "serial.h"
 #include "snapshot.h"
 #include "sound.h"
 #include "tapeport.h"
@@ -54,16 +54,19 @@
 #include "via.h"
 #include "vice-event.h"
 
-#define SNAP_MAJOR 0
+#include "pet-snapshot.h"
+
+
+#define SNAP_MAJOR 1
 #define SNAP_MINOR 0
 
-int pet_snapshot_write_to_stream(snapshot_stream_t *stream, int save_roms, int save_disks,
-                                 int event_mode)
+int pet_snapshot_write(const char *name, int save_roms, int save_disks,
+                       int event_mode)
 {
     snapshot_t *s;
     int ef = 0;
 
-    s = snapshot_create_from_stream(stream, SNAP_MAJOR, SNAP_MINOR, machine_name);
+    s = snapshot_create(name, SNAP_MAJOR, SNAP_MINOR, machine_name);
 
     if (s == NULL) {
         return -1;
@@ -80,6 +83,7 @@ int pet_snapshot_write_to_stream(snapshot_stream_t *stream, int save_roms, int s
         || petdww_snapshot_write_module(s) < 0
         || viacore_snapshot_write_module(machine_context.via, s) < 0
         || drive_snapshot_write_module(s, save_disks, save_roms) < 0
+        || fsdrive_snapshot_write_module(s) < 0
         || event_snapshot_write_module(s, event_mode) < 0
         || tapeport_snapshot_write_module(s, save_disks) < 0
         || keyboard_snapshot_write_module(s) < 0
@@ -91,40 +95,28 @@ int pet_snapshot_write_to_stream(snapshot_stream_t *stream, int save_roms, int s
         ef = acia1_snapshot_write_module(s);
     }
 
-    snapshot_free(s);
+    snapshot_close(s);
+
+    if (ef) {
+        archdep_remove(name);
+    }
 
     return ef;
 }
 
-int pet_snapshot_write(const char *name, int save_roms, int save_disks, int event_mode)
-{
-    snapshot_stream_t *stream;
-    int res;
-
-    stream = snapshot_file_write_fopen(name);
-    res = pet_snapshot_write_to_stream(stream, save_roms, save_disks, event_mode);
-    if (res) {
-        snapshot_fclose_erase(stream);
-    } else if (snapshot_fclose(stream) == EOF) {
-        snapshot_set_error(SNAPSHOT_WRITE_CLOSE_EOF_ERROR);
-        res = -1;
-    }
-    return res;
-}
-
-int pet_snapshot_read_from_stream(snapshot_stream_t *stream, int event_mode)
+int pet_snapshot_read(const char *name, int event_mode)
 {
     snapshot_t *s;
     uint8_t minor, major;
     int ef = 0;
 
-    s = snapshot_open_from_stream(stream, &major, &minor, machine_name);
+    s = snapshot_open(name, &major, &minor, machine_name);
 
     if (s == NULL) {
         return -1;
     }
 
-    if (major != SNAP_MAJOR || minor != SNAP_MINOR) {
+    if (!snapshot_version_is_equal(major, minor, SNAP_MAJOR, SNAP_MINOR)) {
         log_error(LOG_DEFAULT, "Snapshot version (%d.%d) not valid: expecting %d.%d.", major, minor, SNAP_MAJOR, SNAP_MINOR);
         snapshot_set_error(SNAPSHOT_MODULE_INCOMPATIBLE);
         ef = -1;
@@ -140,6 +132,7 @@ int pet_snapshot_read_from_stream(snapshot_stream_t *stream, int event_mode)
         || petdww_snapshot_read_module(s) < 0
         || viacore_snapshot_read_module(machine_context.via, s) < 0
         || drive_snapshot_read_module(s) < 0
+        || fsdrive_snapshot_read_module(s) < 0
         || event_snapshot_read_module(s, event_mode) < 0
         || tapeport_snapshot_read_module(s) < 0
         || keyboard_snapshot_read_module(s) < 0
@@ -151,7 +144,7 @@ int pet_snapshot_read_from_stream(snapshot_stream_t *stream, int event_mode)
         acia1_snapshot_read_module(s);  /* optional, so no error check */
     }
 
-    snapshot_free(s);
+    snapshot_close(s);
 
     if (ef) {
         machine_trigger_reset(MACHINE_RESET_MODE_SOFT);
@@ -160,15 +153,4 @@ int pet_snapshot_read_from_stream(snapshot_stream_t *stream, int event_mode)
     sound_snapshot_finish();
 
     return ef;
-}
-
-int pet_snapshot_read(const char *name, int event_mode)
-{
-    snapshot_stream_t *stream;
-    int res;
-
-    stream = snapshot_file_read_fopen(name);
-    res = pet_snapshot_read_from_stream(stream, event_mode);
-    snapshot_fclose(stream);
-    return res;
 }

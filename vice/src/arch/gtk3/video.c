@@ -1,5 +1,4 @@
-/**
- * \file video.c
+/** \file video.c
  * \brief Native GTK3 UI video stuff
  *
  * \author Marco van den Heuvel <blackystardust68@yahoo.com>
@@ -58,9 +57,11 @@ static int keepaspect = 0;
 /** \brief  Use true aspect ratio */
 static int trueaspect = 0;
 
-/** \brief  Display depth in bits (8, 15, 16, 24, 32) */
-static int display_depth = 24;
+/** \brief  Prevent screen tearing */
+static int vsync = 1;
 
+/** \brief  Display filter (0: nearest 1: bilinear) */
+static int display_filter = 1;
 
 /** \brief  Set KeepAspectRatio resource (bool)
  *
@@ -95,19 +96,36 @@ static int set_trueaspect(int val, void *param)
     return 0;
 }
 
-/** \brief Set the display color depth.
- *  \param     val   new color depth
- *  \param[in] param extra parameter (unused).
- *  \return  Zero on success, nonzero on illegal argument
- *  \warning Neither Cairo nor GTK3's OpenGL system actually respect
- *           this value.
+
+/** \brief  Set VSync resource (bool)
+ *
+ * The display will be updated to reflect any changes this makes.
+ *
+ * \param[in]   val     new value
+ * \param[in]   param   extra parameter (unused)
+ *
+ * \return 0
  */
-static int set_display_depth(int val, void *param)
+static int set_vsync(int val, void *param)
 {
-    if (val != 0 && val != 8 && val != 15 && val != 16 && val != 24 && val != 32) {
-        return -1;
+    vsync = val ? 1 : 0;
+    return 0;
+}
+
+/** \brief Set the display filter for scaling.
+ *  \param     val   new filter (0: nearest, 1: bilinear)
+ *  \param[in] param extra parameter (unused).
+ *  \return  0
+ */
+static int set_display_filter(int val, void *param)
+{
+    if (val < 0) {
+        val = 0;
     }
-    display_depth = val;
+    if (val > 2) {
+        val = 2;
+    }
+    display_filter = val;
     return 0;
 }
 
@@ -127,9 +145,17 @@ static const cmdline_option_t cmdline_options[] =
     { "+keepaspect", SET_RESOURCE, CMDLINE_ATTRIB_NONE,
       NULL, NULL, "KeepAspectRatio", (resource_value_t)0,
       NULL, "Do not keep aspect ratio when scaling (freescale)" },
+    { "-vsync", SET_RESOURCE, CMDLINE_ATTRIB_NONE,
+      NULL, NULL, "VSync", (resource_value_t)1,
+      NULL, "Enable vsync to prevent screen tearing" },
+    { "+vsync", SET_RESOURCE, CMDLINE_ATTRIB_NONE,
+      NULL, NULL, "VSync", (resource_value_t)0,
+      NULL, "Disable vsync to allow screen tearing" },
+    { "-gtkfilter", SET_RESOURCE, CMDLINE_ATTRIB_NEED_ARGS,
+      NULL, NULL, "GTKFilter", NULL,
+      "<mode>", "Set filtering mode (0 = nearest, 1 = bilinear, 2 = cubic" },
     CMDLINE_LIST_END
 };
-
 
 /** \brief  Integer/boolean resources related to video output
  */
@@ -138,10 +164,28 @@ static const resource_int_t resources_int[] = {
       &keepaspect, set_keepaspect, NULL },
     { "TrueAspectRatio", 1, RES_EVENT_NO, NULL,
       &trueaspect, set_trueaspect, NULL },
-    { "DisplayDepth", 0, RES_EVENT_NO, NULL,
-      &display_depth, set_display_depth, NULL },
+    { "VSync", 1, RES_EVENT_NO, NULL,
+      &vsync, set_vsync, NULL },
+    { "GTKFilter", 2, RES_EVENT_NO, NULL,
+      &display_filter, set_display_filter, NULL },
     RESOURCE_INT_LIST_END
 };
+
+int video_arch_get_active_chip(void)
+{
+    int window_idx = ui_get_main_window_index();
+
+    switch (window_idx) {
+        case SECONDARY_WINDOW:
+            return VIDEO_CHIP_VDC;
+            break;
+
+        case PRIMARY_WINDOW:
+        default:
+            return VIDEO_CHIP_VICII;
+            break;
+    }
+}
 
 /** \brief  Arch-specific initialization for a video canvas
  *  \param[inout] canvas The canvas being initialized
@@ -149,7 +193,17 @@ static const resource_int_t resources_int[] = {
  */
 void video_arch_canvas_init(struct video_canvas_s *canvas)
 {
-    canvas->video_draw_buffer_callback = NULL;
+    pthread_mutexattr_t lock_attributes;
+
+    pthread_mutexattr_init(&lock_attributes);
+    pthread_mutexattr_settype(&lock_attributes, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&canvas->lock, &lock_attributes);
+
+    /*
+     * the render output can always be read from in GTK3,
+     * it's not a direct video memory buffer.
+     */
+    canvas->videoconfig->readable = 1;
 }
 
 
@@ -192,13 +246,15 @@ char video_canvas_can_resize(video_canvas_t *canvas)
     return 1;
 }
 
-/** \brief Create a new video_canvas_s.
- *  \param[inout] canvas A freshly allocated canvas object.
- *  \param[in]    width  Pointer to a width value. May be NULL if canvas
- *                       size is not yet known.
- *  \param[in]    height Pointer to a height value. May be NULL if canvas
- *                       size is not yet known.
- *  \param        mapped Unused.
+/** \brief  Create a new video_canvas_s.
+ *
+ *  \param[in,out]  canvas  A freshly allocated canvas object.
+ *  \param[in]      width   Pointer to a width value. May be NULL if canvas
+ *                          size is not yet known.
+ *  \param[in]      height  Pointer to a height value. May be NULL if canvas
+ *                          size is not yet known.
+ *  \param          mapped  Unused.
+ *
  *  \return The completely initialized canvas. The window that holds
  *          it will be visible in the UI at time of return.
  */
@@ -206,8 +262,6 @@ video_canvas_t *video_canvas_create(video_canvas_t *canvas,
                                     unsigned int *width, unsigned int *height,
                                     int mapped)
 {
-    canvas->initialized = 0;
-    canvas->created = 0;
     canvas->renderer_context = NULL;
     canvas->blank_ptr = NULL;
     canvas->pen_ptr = NULL;
@@ -215,15 +269,18 @@ video_canvas_t *video_canvas_create(video_canvas_t *canvas,
     canvas->pen_x = -1;
     canvas->pen_y = -1;
     canvas->pen_buttons = 0;
-    ui_create_main_window(canvas);
-    if (width && height && canvas->renderer_backend) {
-        canvas->renderer_backend->update_context(canvas, *width, *height);
+
+    if (!console_mode) {
+        ui_create_main_window(canvas);
+
+        if (width && height && canvas->renderer_backend) {
+            canvas->renderer_backend->update_context(canvas, *width, *height);
+        }
+
+        ui_display_main_window(canvas->window_index);
     }
 
-    ui_display_main_window(canvas->window_index);
-
     canvas->created = 1;
-    canvas->initialized = 1;
     return canvas;
 }
 
@@ -245,11 +302,13 @@ void video_canvas_destroy(struct video_canvas_s *canvas)
             g_object_unref(G_OBJECT(canvas->pen_ptr));
             canvas->pen_ptr = NULL;
         }
+
+        pthread_mutex_destroy(&canvas->lock);
     }
 }
 
 /** \brief Update the display on a video canvas to reflect the machine
- *         state. 
+ *         state.
  * \param canvas The canvas to update.
  * \param xs     A parameter to forward to video_canvas_render()
  * \param ys     A parameter to forward to video_canvas_render()
@@ -286,7 +345,7 @@ void video_canvas_refresh(struct video_canvas_s *canvas,
 
 void video_canvas_resize(struct video_canvas_s *canvas, char resize_canvas)
 {
-    if (!canvas || !canvas->drawing_area) {
+    if (!canvas || !canvas->event_box) {
         return;
     } else {
         int new_width = canvas->draw_buffer->canvas_physical_width;
@@ -326,7 +385,7 @@ void video_canvas_adjust_aspect_ratio(struct video_canvas_s *canvas)
     }
 
     /* Finally alter our minimum size so the GUI may respect the new minima/maxima */
-    gtk_widget_set_size_request(canvas->drawing_area, width, height);
+    gtk_widget_set_size_request(canvas->event_box, width, height);
 }
 
 /** \brief Assign a palette to the canvas.

@@ -53,6 +53,7 @@
 #include "petmem.h"
 #include "petmodel.h"
 #include "petpia.h"
+#include "petrom.h"
 #include "pets.h"
 #include "petvia.h"
 #include "ram.h"
@@ -110,6 +111,8 @@ static int mem_read_limit_tab[0x101];
 
 read_func_ptr_t *_mem_read_tab_ptr;
 store_func_ptr_t *_mem_write_tab_ptr;
+read_func_ptr_t *_mem_read_tab_ptr_dummy;
+store_func_ptr_t *_mem_write_tab_ptr_dummy;
 static uint8_t **_mem_read_base_tab_ptr;
 static int *mem_read_limit_tab_ptr;
 
@@ -138,6 +141,13 @@ store_func_ptr_t *_mem6809_write_tab_ptr;
 static log_t pet_mem_log = LOG_ERR;
 
 static uint8_t last_access = 0;
+
+/* Current watchpoint state.
+          0 = no watchpoints
+    bit0; 1 = watchpoints active
+    bit1; 2 = watchpoints trigger on dummy accesses
+*/
+static int watchpoints_active = 0;
 
 /* ------------------------------------------------------------------------- */
 
@@ -206,6 +216,22 @@ static uint8_t read_vmirror(uint16_t addr)
 static void store_vmirror(uint16_t addr, uint8_t value)
 {
     mem_ram[0x8000 + (addr & 0xbff)] = value;
+    last_access = value;
+}
+
+/*
+ * On the 2001, the very first model, the 1K of screen was mirrored
+ * through the whole $8xxx block.
+ */
+static uint8_t read_vmirror_2001(uint16_t addr)
+{
+    last_access = mem_ram[0x8000 + (addr & 0x03ff)];
+    return last_access;
+}
+
+static void store_vmirror_2001(uint16_t addr, uint8_t value)
+{
+    mem_ram[0x8000 + (addr & 0x3ff)] = value;
     last_access = value;
 }
 
@@ -396,6 +422,51 @@ static inline uint8_t read6702(void)
  * Only the first odd value which is written after
  * an even value has an effect.
  *
+ * The actual odd value is also not important, but how it differs from
+ * the previous odd value is what counts.
+ *
+ * There are 8 circular shift registers in the 6702. They have different
+ * lengths.  Each time that the odd value is written, they shift one position
+ * to the right.
+ *
+ * There is also a register with 8 output bits, one belonging to each
+ * shift register.  Each time a 1 "shifts out of" a shift register, it
+ * toggles its output register bit. The shift register is circular, so
+ * the register's bit gets fed back to the left.
+ *
+ * For each input bit (from the odd value) which differs from the
+ * previous odd value, the bit at the far end of its shift register is
+ * toggled.  You will see the effect on the output only some even/odd
+ * rounds in the future.
+ *
+ * The odd value is remembered to be compared with the next odd value.
+ *
+ * The output register is the value that is read from the 6702.
+ *
+ * William Levak had a slightly different model in mind but it works
+ * out the same. He wrote the following Basic program to mimic it:
+ *
+100 dims(7,7)
+110 l(0)=6:l(1)=3:l(2)=7:l(3)=8:l(4)=1:l(5)=3:l(6)=5:l(7)=2
+120 b(0)=1:b(1)=2:b(2)=4:b(3)=8:b(4)=16:b(5)=32:b(6)=64:b(7)=128
+130 t=214:ln=214
+140 t2=peek(61408):ift<>t2thene=e+1
+150 printn,t,t2,e
+160 rem n2=int(256*rnd(ti)):print"next number?"n2:goto180
+170 input"next number";n2
+180 poke61408,n2
+190 if(n2andeo)=0theneo=1-(n2and1):goto160
+200 mk=(lnorn2)-(lnandn2)
+210 fori=0to7:ifmkandb(i)thens(i,c(i))=1-s(i,c(i))
+220 next
+230 fori=0to7:c(i)=c(i)+1:ifc(i)=l(i)thenc(i)=0
+240 next:ln=n2:eo=1-(n2and1)
+250 fori=0to7:ifs(i,c(i))=0goto280
+260 ifb(i)andtthent=int(t-b(i)):goto280
+270 t=b(i)ort
+280 next
+290 n=n+1:goto140
+ *
  * Thanks to Ruud Baltissen, William Levak, Rob Clarke,
  * Kajtar Zsolt and Segher Boessenkool, Dave E Roberts,
  * from cbm-hackers, for their contributions.
@@ -445,14 +516,17 @@ static int efe0_dump(void)
     int i;
     int mask = 1;
 
-    mon_out("efe0 = $%02x; previous in = $%02x; odd/even = %d\n", dongle6702.val, dongle6702.prevodd, dongle6702.wantodd);
+    mon_out("efe0 = $%02x; previous in = $%02x; odd/even = %d\n",
+            (unsigned int)dongle6702.val,
+            (unsigned int)dongle6702.prevodd,
+            dongle6702.wantodd);
     for (i = 0; i < 8; i++, mask <<= 1) {
         int j;
         int maskj;
         int sh = dongle6702.shift[i];
         int lm = leftmost[i];
 
-        mon_out("%d %3d: $%02x  %%", i, mask, sh);
+        mon_out("%d %3d: $%02x  %%", i, mask, (unsigned int)sh);
 
         for (j = 7, maskj = 1 << j; j >= 0; j--, maskj >>= 1) {
             if (maskj > lm) {
@@ -1058,7 +1132,7 @@ static void set_std_9tof(void)
     mem_read_limit_tab_ptr = mem_read_limit_tab;
 }
 
-void ramsel_changed()
+void ramsel_changed(void)
 {
     set_std_9tof();
     maincpu_resync_limits();
@@ -1072,19 +1146,41 @@ void get_mem_access_tables(read_func_ptr_t **read, store_func_ptr_t **write, uin
     *limit = mem_read_limit_tab;
 }
 
-void mem_toggle_watchpoints(int flag, void *context)
+/* called by mem_update_config(), mem_toggle_watchpoints() */
+static void mem_update_tab_ptrs(int flag)
 {
     if (flag) {
         _mem_read_tab_ptr = _mem_read_tab_watch;
         _mem_write_tab_ptr = _mem_write_tab_watch;
+        if (flag > 1) {
+            /* enable watchpoints on dummy accesses */
+            _mem_read_tab_ptr_dummy = _mem_read_tab_watch;
+            _mem_write_tab_ptr_dummy = _mem_write_tab_watch;
+        } else {
+            _mem_read_tab_ptr_dummy = _mem_read_tab;
+            _mem_write_tab_ptr_dummy = _mem_write_tab;
+        }
+    } else {
+        /* all watchpoints disabled */
+        _mem_read_tab_ptr = _mem_read_tab;
+        _mem_write_tab_ptr = _mem_write_tab;
+        _mem_read_tab_ptr_dummy = _mem_read_tab;
+        _mem_write_tab_ptr_dummy = _mem_write_tab;
+    }
+}
+
+void mem_toggle_watchpoints(int flag, void *context)
+{
+    if (flag) {
         _mem6809_read_tab_ptr = _mem6809_read_tab_watch;
         _mem6809_write_tab_ptr = _mem6809_write_tab_watch;
     } else {
-        _mem_read_tab_ptr = _mem_read_tab;
-        _mem_write_tab_ptr = _mem_write_tab;
         _mem6809_read_tab_ptr = _mem6809_read_tab;
         _mem6809_write_tab_ptr = _mem6809_write_tab;
     }
+
+    mem_update_tab_ptrs(flag);
+    watchpoints_active = flag;
 }
 
 /*
@@ -1277,7 +1373,19 @@ void petmem_set_vidmem(void)
         mem_read_limit_tab[i] = 0;
     }
 
-    if (pet_colour_type == PET_COLOUR_TYPE_OFF) {
+    /*
+     * Model 2001 has its 1K screen memory mirrored all over $8xxx,
+     * unlike later models.
+     */
+    if (petres.screenmirrors2001) {
+        /* Setup screen mirror 3 and 4 from $8800 to $8FFF */
+        for (; i < 0x90; i++) {
+            _mem_read_tab[i] = read_vmirror_2001;
+            _mem_write_tab[i] = store_vmirror_2001;
+            _mem_read_base_tab[i] = NULL;
+            mem_read_limit_tab[i] = 0;
+        }
+    } else if (pet_colour_type == PET_COLOUR_TYPE_OFF) {
         /* Setup unused from $8800 to $8FFF */
         /* falls through if videoSize >= 0x1000 */
         for (; i < 0x90; i++) {
@@ -1377,7 +1485,7 @@ static void mem_initialize_memory_6809_flat(void)
     /* maincpu_resync_limits(); notyet: 6809 doesn't use bank_base yet. */
 }
 
-void mem_initialize_memory_6809()
+void mem_initialize_memory_6809(void)
 {
     if (spet_flat_mode) {
         mem_initialize_memory_6809_flat();
@@ -1386,22 +1494,28 @@ void mem_initialize_memory_6809()
     }
 }
 
+/*
+ * The memory mapping is probably reset even if FIRQ is disabled
+ * (see http://mikenaberezny.com/wp-content/uploads/2009/11/superos9-mmu-schematic-r2.jpg )
+ * but since a missing FIRQ basically halts the 6809, there is little
+ * difference in practice.
+ */
 int superpet_sync(void)
 {
+    spet_flat_mode = 0;
+    mem_initialize_memory_6809_banked();
+    /* mon_bank(e_default_space, "6809");
+       extern WORD PC;
+       printf("next opcode: %04X: banked %02X, flat %02X\n",
+               PC,
+               mem_ram[EXT_RAM + spet_bank_4k + (PC & 0x0FFF)],
+               mem_ram[EXT_RAM + PC]
+          ); */
+
     if (spet_firq_disabled) {
         log_error(pet_mem_log, "SuperPET: SYNC encountered, but no FIRQ possible!");
         return 1;
     } else {
-        spet_flat_mode = 0;
-        mem_initialize_memory_6809_banked();
-        /* mon_bank(e_default_space, "6809");
-           extern WORD PC;
-           printf("next opcode: %04X: banked %02X, flat %02X\n",
-                   PC,
-                   mem_ram[EXT_RAM + spet_bank_4k + (PC & 0x0FFF)],
-                   mem_ram[EXT_RAM + PC]
-              ); */
-
         return 0;
     }
 }
@@ -1453,6 +1567,8 @@ void mem_initialize_memory(void)
     ram_size = petres.ramSize * 1024;
     _mem_read_tab_ptr = _mem_read_tab;
     _mem_write_tab_ptr = _mem_write_tab;
+    _mem_read_tab_ptr_dummy = _mem_read_tab;
+    _mem_write_tab_ptr_dummy = _mem_write_tab;
 
     /* setup watchpoint tables */
     _mem_read_tab_watch[0] = zero_read_watch;
@@ -1508,14 +1624,10 @@ void mem_powerup(void)
     int i;
     ram_init(mem_ram, RAM_ARRAY);
     /*
-     * A more realistic initial memory is random.
-     * Especially on the screen, which is different memory in most
-     * models.
+     * Initial screen memory is random, which is physically different memory
+     * (and also faster) in most models.
      * (And it helps a bit with the colour option when a proper editor
      * ROM isn't installed)
-     *
-     * FIXME: use memory init pattern
-     *
      */
     for (i = 0; i < 0x1000; i++) {
         mem_ram[0x8000 + i] = (uint8_t)lib_unsigned_rand(0, 255);
@@ -1568,12 +1680,33 @@ void mem_set_basic_text(uint16_t start, uint16_t end)
             mem_ram[basicstart + 7] = mem_ram[loadadr + 3] = end >> 8;
 }
 
+/* this function should always read from the screen currently used by the kernal
+   for output, normally this does just return system ram - except when the
+   videoram is not memory mapped.
+   used by autostart to "read" the kernal messages
+*/
+uint8_t mem_read_screen(uint16_t addr)
+{
+    return ram_read(addr);
+}
+
 void mem_inject(uint32_t addr, uint8_t value)
 {
     /* just call mem_store() to be safe.
        This could possibly be changed to write straight into the
        memory array.  mem_ram[addr & mask] = value; */
     mem_store((uint16_t)(addr & 0xffff), value);
+}
+
+/* In banked memory architectures this will always write to the bank that
+   contains the keyboard buffer and "number of keys in buffer", regardless of
+   what the CPU "sees" currently.
+   In all other cases this just writes to the first 64kb block, usually by
+   wrapping to mem_inject().
+*/
+void mem_inject_key(uint16_t addr, uint8_t value)
+{
+    mem_inject(addr, value);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -1632,26 +1765,52 @@ static uint8_t peek_bank_io(uint16_t addr)
 }
 
 /* Exported banked memory access functions for the monitor.  */
+#define MAXBANKS (7)
 
-static const char *banknames[] = {
-    "default", "cpu", "ram", "rom", "io", "extram", "6809", NULL
+static const char *banknames[MAXBANKS + 1] = {
+    "default",
+    "cpu",
+    "ram",
+    "rom",
+    "io",
+    "extram",
+    "6809",
+    /* by convention, a "bank array" has a 2-hex-digit bank index appended */
+    NULL
 };
 
 enum {
-    bank_default, bank_cpu = 0, bank_ram, bank_rom, bank_io, bank_extram,
+    bank_cpu = 0,
+    bank_ram,
+    bank_rom,
+    bank_io,
+    bank_extram,
     bank_cpu6809
 };
 
-static const int banknums[] = {
-    bank_default, bank_cpu, bank_ram, bank_rom, bank_io, bank_extram,
-    bank_cpu6809,
+static const int banknums[MAXBANKS + 1] = {
+    bank_cpu, /* default */
+    bank_cpu,
+    bank_ram,
+    bank_rom,
+    bank_io,
+    bank_extram,
+    bank_cpu6809, -1
 };
+
+static const int bankindex[MAXBANKS + 1] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+static const int bankflags[MAXBANKS + 1] = { 0, 0, 0, 0, 0, 0, 0, -1 };
 
 const char **mem_bank_list(void)
 {
     return banknames;
 }
 
+const int *mem_bank_list_nos(void) {
+    return banknums;
+}
+
+/* return bank number for a given literal bank name */
 int mem_bank_from_name(const char *name)
 {
     int i = 0;
@@ -1665,10 +1824,37 @@ int mem_bank_from_name(const char *name)
     return -1;
 }
 
+/* return current index for a given bank */
+int mem_bank_index_from_bank(int bank)
+{
+    int i = 0;
+
+    while (banknums[i] > -1) {
+        if (banknums[i] == bank) {
+            return bankindex[i];
+        }
+        i++;
+    }
+    return -1;
+}
+
+int mem_bank_flags_from_bank(int bank)
+{
+    int i = 0;
+
+    while (banknums[i] > -1) {
+        if (banknums[i] == bank) {
+            return bankflags[i];
+        }
+        i++;
+    }
+    return -1;
+}
+
 uint8_t mem_bank_read(int bank, uint16_t addr, void *context)
 {
     switch (bank) {
-        case bank_default:      /* current */
+        case bank_cpu:      /* current */
             return mem_read(addr);
             break;
         case bank_extram:       /* extended RAM area (8x96, SuperPET) */
@@ -1698,10 +1884,11 @@ uint8_t mem_bank_read(int bank, uint16_t addr, void *context)
     return mem_ram[addr];
 }
 
+/* used by monitor if sfx off */
 uint8_t mem_bank_peek(int bank, uint16_t addr, void *context)
 {
     switch (bank) {
-        case bank_default:      /* current */
+        case bank_cpu:      /* current */
             return mem_read(addr); /* FIXME */
             break;
         case bank_io:           /* io */
@@ -1725,7 +1912,7 @@ uint8_t mem_bank_peek(int bank, uint16_t addr, void *context)
 void mem_bank_write(int bank, uint16_t addr, uint8_t byte, void *context)
 {
     switch (bank) {
-        case bank_default:      /* current */
+        case bank_cpu:      /* current */
             mem_store(addr, byte);
             return;
         case bank_extram:       /* extended RAM area (8x96, SuperPET) */
@@ -1753,11 +1940,18 @@ void mem_bank_write(int bank, uint16_t addr, uint8_t byte, void *context)
         case bank_cpu6809:      /* rom */
             mem6809_store(addr, byte);
             return;
-        case 1:                 /* ram */
+        case bank_ram:                 /* ram */
             break;
     }
     mem_ram[addr] = byte;
 }
+
+/* used by monitor if sfx off */
+void mem_bank_poke(int bank, uint16_t addr, uint8_t byte, void *context)
+{
+    mem_bank_write(bank, addr, byte, context);
+}
+
 
 static int mem_dump_io(void *context, uint16_t addr)
 {
@@ -1787,19 +1981,19 @@ static int mem_dump_io(void *context, uint16_t addr)
             return efe0_dump();
         } else if (addr >= 0xeff0 && addr <= 0xeff3) {
             /* ACIA */
-            /* return aciacore_dump(); */
+            return acia1_dump();
         } else if (addr == 0xeff8) {
             /* Control switch */
             mon_out("CPU: %s\n",
                     petres.superpet_cpu_switch == SUPERPET_CPU_6502 ? "6502" :
                     petres.superpet_cpu_switch == SUPERPET_CPU_6809 ? "6809" :
                     "PROG (unimpl)");
-            mon_out("RAM write protect: $%x\n", spet_ramwp);
-            mon_out("diagnostic sense: $%x\n", spet_diag);
+            mon_out("RAM write protect: $%x\n", (unsigned int)spet_ramwp);
+            mon_out("diagnostic sense: $%x\n", (unsigned int)spet_diag);
             return 0;
         } else if (addr == 0xeffc) {
             /* Bank select */
-            mon_out("bank: $%x\n", spet_bank);
+            mon_out("bank: $%x\n", (unsigned int)spet_bank);
             mon_out("control write protect: %d\n", spet_ctrlwp);
             mon_out("flat (super-os9) mode: %d\n", !!spet_flat_mode);
             mon_out("firq disabled: %d\n", !!spet_firq_disabled);
@@ -1818,24 +2012,24 @@ mem_ioreg_list_t *mem_ioreg_list_get(void *context)
     mem_ioreg_list_t *mem_ioreg_list = NULL;
 
     io_source_ioreg_add_list(&mem_ioreg_list);
-    mon_ioreg_add_list(&mem_ioreg_list, "PIA1", 0xe810, 0xe81f, mem_dump_io, NULL);
-    mon_ioreg_add_list(&mem_ioreg_list, "PIA2", 0xe820, 0xe82f, mem_dump_io, NULL);
-    mon_ioreg_add_list(&mem_ioreg_list, "VIA", 0xe840, 0xe84f, mem_dump_io, NULL);
+    mon_ioreg_add_list(&mem_ioreg_list, "PIA1", 0xe810, 0xe81f, mem_dump_io, NULL, IO_MIRROR_NONE);
+    mon_ioreg_add_list(&mem_ioreg_list, "PIA2", 0xe820, 0xe82f, mem_dump_io, NULL, IO_MIRROR_NONE);
+    mon_ioreg_add_list(&mem_ioreg_list, "VIA", 0xe840, 0xe84f, mem_dump_io, NULL, IO_MIRROR_NONE);
     if (petres.crtc) {
-        mon_ioreg_add_list(&mem_ioreg_list, "CRTC", 0xe880, 0xe881, mem_dump_io, NULL);
+        mon_ioreg_add_list(&mem_ioreg_list, "CRTC", 0xe880, 0xe881, mem_dump_io, NULL, IO_MIRROR_NONE);
     }
     if (pethre_enabled) {
-        mon_ioreg_add_list(&mem_ioreg_list, "HRE", 0xe888, 0xe888, mem_dump_io, NULL);
+        mon_ioreg_add_list(&mem_ioreg_list, "HRE", 0xe888, 0xe888, mem_dump_io, NULL, IO_MIRROR_NONE);
     }
     if (petres.map) {
-        mon_ioreg_add_list(&mem_ioreg_list, "8096", 0xfff0, 0xfff0, mem_dump_io, NULL);
+        mon_ioreg_add_list(&mem_ioreg_list, "8096", 0xfff0, 0xfff0, mem_dump_io, NULL, IO_MIRROR_NONE);
     }
     if (petres.superpet) {
-        mon_ioreg_add_list(&mem_ioreg_list, "6702", 0xefe0, 0xefe3, mem_dump_io, NULL);
-        mon_ioreg_add_list(&mem_ioreg_list, "ACIA", 0xeff0, 0xeff3, mem_dump_io, NULL);
-        mon_ioreg_add_list(&mem_ioreg_list, "Control", 0xeff8, 0xeff8, mem_dump_io, NULL);
-        mon_ioreg_add_list(&mem_ioreg_list, "Bank", 0xeffc, 0xeffc, mem_dump_io, NULL);
-        mon_ioreg_add_list(&mem_ioreg_list, "RAM/ROM", 0xeffe, 0xeffe, mem_dump_io, NULL);
+        mon_ioreg_add_list(&mem_ioreg_list, "6702", 0xefe0, 0xefe3, mem_dump_io, NULL, IO_MIRROR_NONE);
+        mon_ioreg_add_list(&mem_ioreg_list, "ACIA", 0xeff0, 0xeff3, mem_dump_io, NULL, IO_MIRROR_NONE);
+        mon_ioreg_add_list(&mem_ioreg_list, "Control", 0xeff8, 0xeff8, mem_dump_io, NULL, IO_MIRROR_NONE);
+        mon_ioreg_add_list(&mem_ioreg_list, "Bank", 0xeffc, 0xeffc, mem_dump_io, NULL, IO_MIRROR_NONE);
+        mon_ioreg_add_list(&mem_ioreg_list, "RAM/ROM", 0xeffe, 0xeffe, mem_dump_io, NULL, IO_MIRROR_NONE);
     }
 
     return mem_ioreg_list;
@@ -1861,12 +2055,32 @@ int petmem_get_rom_columns(void)
     return petres.rom_video;
 }
 
+/* FIXME: this is incomplete */
 void mem_get_screen_parameter(uint16_t *base, uint8_t *rows, uint8_t *columns, int *bank)
 {
     *base = 0x8000;
     *rows = 25;
     *columns = (uint8_t)petmem_get_screen_columns();
     *bank = 0;
+}
+
+/* used by autostart to locate and "read" kernal output on the current screen
+ * this function should return whatever the kernal currently uses, regardless
+ * what is currently visible/active in the UI.
+ */
+void mem_get_cursor_parameter(uint16_t *screen_addr, uint8_t *cursor_column, uint8_t *line_length, int *blinking)
+{
+    /* Cursor Blink enable: 1 = Flash Cursor, 0 = Cursor disabled, -1 = n/a */
+    if (petres.kernal_checksum == PET_KERNAL1_CHECKSUM) {
+        *blinking = mem_ram[0x224] ? 0 : 1;
+        *screen_addr = mem_ram[0xe0] + mem_ram[0xe1] * 256; /* Current Screen Line Address */
+        *cursor_column = mem_ram[0xe2];    /* Cursor Column on Current Line */
+    } else {
+        *blinking = mem_ram[0xa7] ? 0 : 1;
+        *screen_addr = mem_ram[0xc4] + mem_ram[0xc5] * 256; /* Current Screen Line Address */
+        *cursor_column = mem_ram[0xc6];    /* Cursor Column on Current Line */
+    }
+    *line_length = petres.rom_video;   /* Physical Screen Line Length */
 }
 
 /************************** PET resource handling ************************/
@@ -1887,10 +2101,4 @@ void petmem_check_info(petres_t *pi)
         pi->vmask = 0x1fff;
         pi->videoSize = 0x1000;
     }
-}
-
-/* dummy function to satisfy the global cartridge system */
-int cartridge_attach_image(int type, const char *name)
-{
-    return -1;
 }

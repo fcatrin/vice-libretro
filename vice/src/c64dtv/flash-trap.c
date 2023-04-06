@@ -172,7 +172,7 @@ int flash_trap_seek_next(void)
             if (fi) {
                 fileio_close(fi);
             }
-            fi = fileio_open(name, path, FILEIO_FORMAT_RAW, FILEIO_COMMAND_READ, FILEIO_TYPE_ANY);
+            fi = fileio_open(name, path, FILEIO_FORMAT_RAW, FILEIO_COMMAND_READ, FILEIO_TYPE_ANY, NULL);
             if (fi) {
                 uint8_t addr[2];
                 fileio_read(fi, addr, 2);
@@ -293,7 +293,7 @@ static int set_flash_trap_trueflashfs(int val, void *param)
 }
 
 static const resource_string_t resources_string[] = {
-    { "FSFlashDir", FSDEVICE_DEFAULT_DIR, RES_EVENT_NO, NULL,
+    { "FSFlashDir", ARCHDEP_FSDEVICE_DEFAULT_DIR, RES_EVENT_NO, NULL,
       &flash_trap_fsflashdir, set_flash_trap_fsflashdir, NULL },
     RESOURCE_STRING_LIST_END
 };

@@ -60,7 +60,7 @@ namespace reSID
 // Tommi Lempinen has done an impressive work on re-vectorizing and annotating
 // the die photographs, substantially simplifying further analysis of the
 // filter circuit.
-// 
+//
 // The filter schematics below are reverse engineered from these re-vectorized
 // and annotated die photographs. While the filter first depicted in reSID 0.9
 // is a correct model of the basic filter, the schematics are now completed
@@ -72,7 +72,7 @@ namespace reSID
 //
 // SID 6581 filter / mixer / output
 // --------------------------------
-// 
+//
 //                ---------------------------------------------------
 //               |                                                   |
 //               |                         --1R1-- \--  D7           |
@@ -84,7 +84,7 @@ namespace reSID
 //               |   |                     --8R1-- \--| D4           | (7.0R1)
 //               |   |                                |              |
 // $17           |   |                    (CAP2B)     |  (CAP1B)     |
-// 0=to mixer    |    --R8--    ---R8--        ---C---|       ---C---| 
+// 0=to mixer    |    --R8--    ---R8--        ---C---|       ---C---|
 // 1=to filter   |          |  |       |      |       |      |       |
 //                ------R8--|-----[A>--|--Rw-----[A>--|--Rw-----[A>--|
 //     ve (EXT IN)          |          |              |              |
@@ -102,13 +102,13 @@ namespace reSID
 //     |   |   |   |             |   |   |
 //      ---------------------------------                          12V
 //                 |
-//                 |               D3  --/ --1R2--                  |
-//                 |    ---R8--       |           |   ---R2--       |
-//                 |   |       |   D2 |--/ --2R2--|  |       |  ||--
+//                 |               D3  --/ --1R4--                  |
+//                 |    ---R8--       |           |   ---R3--       |
+//                 |   |       |   D2 |--/ --2R4--|  |       |  ||--
 //                  ------[A>---------|           |-----[A>-----||
-//                                 D1 |--/ --4R2--| (4.25R2)    ||--
+//                                 D1 |--/ --4R4--| (4.25R2)    ||--
 //                        $18         |           |                 |
-//                        0=open   D0  --/ --8R2--  (8.75R2)        |
+//                        0=open   D0  --/ --8R4--  (8.75R2)        |
 //
 //                                                                  vo (AUDIO
 //                                                                      OUT)
@@ -147,8 +147,8 @@ namespace reSID
 // of 12V, the NMOS FET will enter saturation mode (a.k.a. active mode), and
 // the NMOS FET will not operate anywhere like a resistor.
 //
-// 
-// 
+//
+//
 // NMOS FET voltage controlled resistor (VCR)
 // ------------------------------------------
 //
@@ -171,7 +171,7 @@ namespace reSID
 // vo  - output
 // Rn  - "resistors", implemented with custom NMOS FETs
 // Vw  - voltage from 11-bit DAC (frequency cutoff control)
-// 
+//
 // Notes:
 //
 // An approximate value for R24 can be found by using the formula for the
@@ -198,9 +198,9 @@ namespace reSID
 // Note that these are only approximate values for one particular SID chip,
 // due to process variations the values can be substantially different in
 // other chips.
-// 
-// 
-// 
+//
+//
+//
 // Filter frequency cutoff DAC
 // ---------------------------
 //
@@ -221,12 +221,12 @@ namespace reSID
 // which varies with the input signals to the VCRs. This can be seen from the
 // VCR figure above.
 //
-// 
-// 
+//
+//
 // "Op-amp" (self-biased NMOS inverter)
 // ------------------------------------
-//                  
-//                  
+//
+//
 //                        12V
 //
 //                         |
@@ -310,7 +310,7 @@ namespace reSID
 //
 // SID 8580 filter / mixer / output
 // --------------------------------
-// 
+//
 //               +---------------------------------------------------+
 //               |    $17      +----Rf-+                             |
 //               |             |       |                             |
@@ -326,31 +326,31 @@ namespace reSID
 //               |   |                    +---Ri-- \--o !D6&!D7      |
 //               |   |                                |              |
 // $17           |   |                    (CAP2B)     |  (CAP1B)     |
-// 0=to mixer    |   +--R8--+  +---R8--+      +---C---o      +---C---o
+// 0=to mixer    |   +--R7--+  +---R7--+      +---C---o      +---C---o
 // 1=to filter   |          |  |       |      |       |      |       |
-//               +------R8--o--o--[A>--o--Rfc-o--[A>--o--Rfc-o--[A>--o
+//               +------R7--o--o--[A>--o--Rfc-o--[A>--o--Rfc-o--[A>--o
 //     ve (EXT IN)          |          |              |              |
-// D3  \ ---------------R8--o          |              | (CAP2A)      | (CAP1A)
+// D3  \ --------------R12--o          |              | (CAP2A)      | (CAP1A)
 //     |   v3               |          | vhp          | vbp          | vlp
-// D2  |   \ -----------R8--o    +-----+              |              |
+// D2  |   \ -----------R7--o    +-----+              |              |
 //     |   |   v2           |    |                    |              |
-// D1  |   |   \ -------R8--o    |   +----------------+              |
+// D1  |   |   \ -------R7--o    |   +----------------+              |
 //     |   |   |   v1       |    |   |                               |
-// D0  |   |   |   \ ---R8--+    |   |   +---------------------------+
+// D0  |   |   |   \ ---R7--+    |   |   +---------------------------+
 //     |   |   |   |             |   |   |
-//     R6  R6  R6  R6            R6  R6  R6
+//     R9  R5  R5  R5            R5  R5  R5
 //     |   |   |   | $18         |   |   |  $18
 //     |    \  |   | D7: 1=open   \   \   \ D6 - D4: 0=open
 //     |   |   |   |             |   |   |
 //     +---o---o---o-------------o---o---+
 //                 |
-//                 |               D3 +--/ --1R2--+
+//                 |               D3 +--/ --1R4--+
 //                 |   +---R8--+      |           |  +---R2--+
-//                 |   |       |   D2 o--/ --2R2--o  |       |
+//                 |   |       |   D2 o--/ --2R4--o  |       |
 //                 +---o--[A>--o------o           o--o--[A>--o-- vo (AUDIO OUT)
-//                                 D1 o--/ --4R2--o (4.25R2)
+//                                 D1 o--/ --4R4--o
 //                        $18         |           |
-//                        0=open   D0 +--/ --8R2--+ (8.75R2)
+//                        0=open   D0 +--/ --8R4--+
 //
 //
 //
@@ -551,7 +551,6 @@ public:
 protected:
   void set_sum_mix();
   void set_w0();
-  void set_Q();
 
   // Filter enabled.
   bool enabled;
@@ -614,6 +613,7 @@ protected:
     // Lookup tables for gain and summer op-amps in output stage / filter.
     unsigned short summer[summer_offset<5>::value];
     unsigned short gain[16][1 << 16];
+    unsigned short resonance[16][1 << 16];
     unsigned short mixer[mixer_offset<8>::value];
     // Cutoff frequency DAC output voltage table. FC is an 11 bit register.
     unsigned short f0_dac[1 << 11];
@@ -622,7 +622,6 @@ protected:
   // 6581 only
   // Cutoff frequency DAC voltage, resonance.
   int Vddt_Vw_2, Vw_bias;
-  int _8_div_Q;
 
   static int n_snake;
 
@@ -632,10 +631,7 @@ protected:
   static int n_param;
 
   // DAC gate voltage
-  int kVgt;
-
-  // Lookup tables for resonance
-  static unsigned short resonance[16][1 << 16];
+  int nVgt;
 
   int solve_gain(opamp_t* opamp, int n, int vi_t, int& x, model_filter_t& mf);
   int solve_integrate_6581(int dt, int vi_t, int& x, int& vc, model_filter_t& mf);
@@ -747,13 +743,13 @@ void Filter::clock(int voice1, int voice2, int voice3)
     // MOS 6581.
     Vlp = solve_integrate_6581(1, Vbp, Vlp_x, Vlp_vc, f);
     Vbp = solve_integrate_6581(1, Vhp, Vbp_x, Vbp_vc, f);
-    Vhp = f.summer[offset + f.gain[_8_div_Q][Vbp] + Vlp + Vi];
+    Vhp = f.summer[offset + f.resonance[res][Vbp] + Vlp + Vi];
   }
   else {
     // MOS 8580.
     Vlp = solve_integrate_8580(1, Vbp, Vlp_x, Vlp_vc, f);
     Vbp = solve_integrate_8580(1, Vhp, Vbp_x, Vbp_vc, f);
-    Vhp = f.summer[offset + resonance[res][Vbp] + Vlp + Vi];
+    Vhp = f.summer[offset + f.resonance[res][Vbp] + Vlp + Vi];
   }
 }
 
@@ -862,7 +858,7 @@ void Filter::clock(cycle_count delta_t, int voice1, int voice2, int voice3)
       // Calculate filter outputs.
       Vlp = solve_integrate_6581(delta_t_flt, Vbp, Vlp_x, Vlp_vc, f);
       Vbp = solve_integrate_6581(delta_t_flt, Vhp, Vbp_x, Vbp_vc, f);
-      Vhp = f.summer[offset + f.gain[_8_div_Q][Vbp] + Vlp + Vi];
+      Vhp = f.summer[offset + f.resonance[res][Vbp] + Vlp + Vi];
 
       delta_t -= delta_t_flt;
     }
@@ -877,7 +873,7 @@ void Filter::clock(cycle_count delta_t, int voice1, int voice2, int voice3)
       // Calculate filter outputs.
       Vlp = solve_integrate_8580(delta_t_flt, Vbp, Vlp_x, Vlp_vc, f);
       Vbp = solve_integrate_8580(delta_t_flt, Vhp, Vbp_x, Vbp_vc, f);
-      Vhp = f.summer[offset + resonance[res][Vbp] + Vlp + Vi];
+      Vhp = f.summer[offset + f.resonance[res][Vbp] + Vlp + Vi];
 
       delta_t -= delta_t_flt;
     }
@@ -1536,7 +1532,7 @@ int Filter::solve_gain(opamp_t* opamp, int n, int vi, int& x, model_filter_t& mf
     // The dividend is scaled by m^2*2^27.
     int f = a*int(unsigned(b_vx)*unsigned(b_vx) >> 12) - c - int(unsigned(b_vo)*unsigned(b_vo) >> 5);
     // The divisor is scaled by m*2^11.
-    int df = (b_vo*(dvx + (1 << 11)) - a*(b_vx*dvx >> 7)) >> 15;
+    int df = ((b_vo*(dvx + (1 << 11)) >> 1) - (a*(b_vx*dvx >> 8))) >> 14;
     // The resulting quotient is thus scaled by m*2^16.
 
     // Newton-Raphson step: xk1 = xk - f(xk)/f'(xk)
@@ -1606,7 +1602,7 @@ both subthreshold, triode, and saturation modes.
 The Shichman-Hodges transistor model routinely used in textbooks may
 be written as follows:
 
-  Ids = 0                          , Vgst < 0               (subthreshold mode) 
+  Ids = 0                          , Vgst < 0               (subthreshold mode)
   Ids = K/2*W/L*(2*Vgst - Vds)*Vds , Vgst >= 0, Vds < Vgst  (triode mode)
   Ids = K/2*W/L*Vgst^2             , Vgst >= 0, Vds >= Vgst (saturation mode)
 
@@ -1623,10 +1619,10 @@ following substitution:
 
   Vds = Vgst - (Vgst - Vds) = Vgst - Vgdt
 
-  Ids = K*W/L*(2*Vgst - Vds)*Vds
-  = K*W/L*(2*Vgst - (Vgst - Vgdt)*(Vgst - Vgdt)
-  = K*W/L*(Vgst + Vgdt)*(Vgst - Vgdt)
-  = K*W/L*(Vgst^2 - Vgdt^2)
+  Ids = K/2*W/L*(2*Vgst - Vds)*Vds
+  = K/2*W/L*(2*Vgst - (Vgst - Vgdt)*(Vgst - Vgdt)
+  = K/2*W/L*(Vgst + Vgdt)*(Vgst - Vgdt)
+  = K/2*W/L*(Vgst^2 - Vgdt^2)
 
 This turns out to be a general equation which covers both the triode
 and saturation modes (where the second term is 0 in saturation mode).
@@ -1635,7 +1631,7 @@ currents without any change of parameters (since the terms for drain
 and source are identical except for the sign).
 
 FIXME: Subthreshold as function of Vgs, Vgd.
-  Ids = I0*e^(Vgst/(n*VT))       , Vgst < 0               (subthreshold mode) 
+  Ids = I0*e^(Vgst/(n*VT))       , Vgst < 0               (subthreshold mode)
 
 The remaining problem with the textbook model is that the transition
 from subthreshold the triode/saturation is not continuous.
@@ -1649,7 +1645,7 @@ The EKV model (Enz, Krummenacher and Vittoz) essentially performs this
 blending using an elegant mathematical formulation:
 
   Ids = Is*(if - ir)
-  Is = 2*u*Cox*Ut^2/k*W/L
+  Is = ((2*u*Cox*Ut^2)/k)*W/L
   if = ln^2(1 + e^((k*(Vg - Vt) - Vs)/(2*Ut))
   ir = ln^2(1 + e^((k*(Vg - Vt) - Vd)/(2*Ut))
 
@@ -1665,10 +1661,10 @@ Rw in the circuit diagram above is a VCR (voltage controlled resistor),
 as shown in the circuit diagram below.
 
                    Vw
-                   
+
                    |
            Vdd     |
-              |---|  
+              |---|
              _|_   |
            --    --| Vg
           |      __|__
@@ -1758,7 +1754,7 @@ is driven by a temperature dependent voltage divider.
   vc = vc0 - n*(IRfc(vi,vx))
   vc = vc0 - n*(IRfc(vi,g(vc)))
 
-IRfc = K*W/L*(Vgst^2 - Vgdt^2) = n*((Vgt - vx)^2 - (Vgt - vi)^2)
+IRfc = K/2*W/L*(Vgst^2 - Vgdt^2) = n*((Vgt - vx)^2 - (Vgt - vi)^2)
 */
 RESID_INLINE
 int Filter::solve_integrate_8580(int dt, int vi, int& vx, int& vc, model_filter_t& mf)
@@ -1769,8 +1765,8 @@ int Filter::solve_integrate_8580(int dt, int vi, int& vx, int& vc, model_filter_
   // (a - t) - (b - t) = a - b
 
   // Dac voltages.
-  unsigned int Vgst = kVgt - vx;
-  unsigned int Vgdt = (vi < kVgt) ? kVgt - vi : 0;  // triode/saturation mode
+  unsigned int Vgst = nVgt - vx;
+  unsigned int Vgdt = (vi < nVgt) ? nVgt - vi : 0;  // triode/saturation mode
 
   // Dac current, scaled by (1/m)*2^13*m*2^16*m*2^16*2^-15 = m*2^30
   int n_I_rfc = n_dac*(int(Vgst*Vgst - Vgdt*Vgdt) >> 15);

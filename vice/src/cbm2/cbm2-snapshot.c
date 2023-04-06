@@ -29,7 +29,7 @@
 
 #include <stdio.h>
 
-#include "cbm2-snapshot.h"
+#include "archdep.h"
 #include "cbm2.h"
 #include "cbm2acia.h"
 #include "cbm2memsnapshot.h"
@@ -37,31 +37,33 @@
 #include "crtc.h"
 #include "drive-snapshot.h"
 #include "drive.h"
-#include "ioutil.h"
 #include "joystick.h"
 #include "keyboard.h"
 #include "log.h"
 #include "machine.h"
 #include "maincpu.h"
+#include "serial.h"
 #include "sid-snapshot.h"
-#include "sound.h"
 #include "snapshot.h"
+#include "sound.h"
 #include "tapeport.h"
-#include "userport.h"
 #include "tpi.h"
 #include "types.h"
+#include "userport.h"
 #include "vice-event.h"
 
+#include "cbm2-snapshot.h"
 
-#define SNAP_MAJOR          0
+
+#define SNAP_MAJOR          1
 #define SNAP_MINOR          0
 
-int cbm2_snapshot_write_to_stream(snapshot_stream_t *stream, int save_roms, int save_disks,
-                                  int event_mode)
+int cbm2_snapshot_write(const char *name, int save_roms, int save_disks,
+                        int event_mode)
 {
     snapshot_t *s;
 
-    s = snapshot_create_from_stream(stream, SNAP_MAJOR, SNAP_MINOR, machine_get_name());
+    s = snapshot_create(name, SNAP_MAJOR, SNAP_MINOR, machine_get_name());
 
     if (s == NULL) {
         return -1;
@@ -78,60 +80,47 @@ int cbm2_snapshot_write_to_stream(snapshot_stream_t *stream, int save_roms, int 
         || acia1_snapshot_write_module(s) < 0
         || sid_snapshot_write_module(s) < 0
         || drive_snapshot_write_module(s, save_disks, save_roms) < 0
+        || fsdrive_snapshot_write_module(s) < 0
         || event_snapshot_write_module(s, event_mode) < 0
         || tapeport_snapshot_write_module(s, save_disks) < 0
         || keyboard_snapshot_write_module(s) < 0
         || userport_snapshot_write_module(s) < 0) {
-        snapshot_free(s);
+        snapshot_close(s);
+        archdep_remove(name);
         return -1;
     }
 
-    snapshot_free(s);
+    snapshot_close(s);
     return 0;
 }
 
-int cbm2_snapshot_write(const char *name, int save_roms, int save_disks, int event_mode)
-{
-    snapshot_stream_t *stream;
-    int res;
-
-    stream = snapshot_file_write_fopen(name);
-    res = cbm2_snapshot_write_to_stream(stream, save_roms, save_disks, event_mode);
-    if (res) {
-        snapshot_fclose_erase(stream);
-    } else if (snapshot_fclose(stream) == EOF) {
-        snapshot_set_error(SNAPSHOT_WRITE_CLOSE_EOF_ERROR);
-        res = -1;
-    }
-    return res;
-}
-
-int cbm2_snapshot_read_from_stream(snapshot_stream_t *stream, int event_mode)
+int cbm2_snapshot_read(const char *name, int event_mode)
 {
     snapshot_t *s;
     uint8_t minor, major;
 
-    s = snapshot_open_from_stream(stream, &major, &minor, machine_get_name());
+    s = snapshot_open(name, &major, &minor, machine_get_name());
 
     if (s == NULL) {
         return -1;
     }
 
-    if (major != SNAP_MAJOR || minor != SNAP_MINOR) {
+    if (!snapshot_version_is_equal(major, minor, SNAP_MAJOR, SNAP_MINOR)) {
         log_error(LOG_DEFAULT, "Snapshot version (%d.%d) not valid: expecting %d.%d.", major, minor, SNAP_MAJOR, SNAP_MINOR);
         snapshot_set_error(SNAPSHOT_MODULE_INCOMPATIBLE);
         goto fail;
     }
 
     if (maincpu_snapshot_read_module(s) < 0
-        || crtc_snapshot_read_module(s) < 0
         || cbm2_snapshot_read_module(s) < 0
+        || crtc_snapshot_read_module(s) < 0
         || ciacore_snapshot_read_module(machine_context.cia1, s) < 0
         || tpicore_snapshot_read_module(machine_context.tpi1, s) < 0
         || tpicore_snapshot_read_module(machine_context.tpi2, s) < 0
         || acia1_snapshot_read_module(s) < 0
         || sid_snapshot_read_module(s) < 0
         || drive_snapshot_read_module(s) < 0
+        || fsdrive_snapshot_read_module(s) < 0
         || event_snapshot_read_module(s, event_mode) < 0
         || tapeport_snapshot_read_module(s) < 0
         || keyboard_snapshot_read_module(s) < 0
@@ -139,28 +128,16 @@ int cbm2_snapshot_read_from_stream(snapshot_stream_t *stream, int event_mode)
         goto fail;
     }
 
-    snapshot_free(s);
     sound_snapshot_finish();
 
     return 0;
 
 fail:
     if (s != NULL) {
-        snapshot_free(s);
+        snapshot_close(s);
     }
 
     machine_trigger_reset(MACHINE_RESET_MODE_SOFT);
 
     return -1;
-}
-
-int cbm2_snapshot_read(const char *name, int event_mode)
-{
-    snapshot_stream_t *stream;
-    int res;
-
-    stream = snapshot_file_read_fopen(name);
-    res = cbm2_snapshot_read_from_stream(stream, event_mode);
-    snapshot_fclose(stream);
-    return res;
 }

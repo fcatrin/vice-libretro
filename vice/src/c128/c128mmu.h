@@ -39,11 +39,23 @@ extern uint8_t mmu_ffxx_read_z80(uint16_t addr);
 
 extern void mmu_reset(void);
 extern void mmu_set_config64(int config);
+extern int mmu_is_c64config(void);
 
 extern void mmu_init(void);
 extern int mmu_resources_init(void);
 extern int mmu_cmdline_options_init(void);
 
 extern int mmu_dump(void *context, uint16_t addr);
+
+extern void c128_mem_set_mmu_page_0(uint8_t val);
+extern void c128_mem_set_mmu_page_1(uint8_t val);
+
+extern void c128_mem_set_mmu_page_0_bank(uint8_t val);
+extern void c128_mem_set_mmu_page_1_bank(uint8_t val);
+
+extern void c128_mem_set_mmu_page_0_target_ram(uint8_t val);
+extern void c128_mem_set_mmu_page_1_target_ram(uint8_t val);
+
+extern void c128_mem_set_mmu_zp_sp_shared(uint8_t val);
 
 #endif

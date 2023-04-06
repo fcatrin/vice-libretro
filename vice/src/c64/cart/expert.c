@@ -43,6 +43,8 @@
 #include "export.h"
 #include "interrupt.h"
 #include "lib.h"
+#include "monitor.h"
+#include "ram.h"
 #include "resources.h"
 #include "snapshot.h"
 #include "types.h"
@@ -189,7 +191,6 @@ NMI entry from expert 2.70:
 
 #ifdef DBGEXPERT
 #define DBG(x) printf x
-char *expert_mode[3]={"off", "prg", "on"};
 #else
 #define DBG(x)
 #endif
@@ -203,6 +204,8 @@ char *expert_mode[3]={"off", "prg", "on"};
 #endif
 #define EXPERT_OFF ((0 << 0) | (1 << 1)) /* ram */
 #define EXPERT_ON  ((1 << 0) | (1 << 1)) /* ultimax */
+
+const char * const expert_mode[3]={"off", "prg", "on"};
 
 static int cartmode = EXPERT_MODE_DEFAULT;
 static int expert_enabled = 0;
@@ -225,23 +228,25 @@ static int expert_load_image(void);
 
 /* ---------------------------------------------------------------------*/
 
-uint8_t expert_io1_read(uint16_t addr);
-uint8_t expert_io1_peek(uint16_t addr);
-void expert_io1_store(uint16_t addr, uint8_t value);
+static uint8_t expert_io1_read(uint16_t addr);
+static uint8_t expert_io1_peek(uint16_t addr);
+static void expert_io1_store(uint16_t addr, uint8_t value);
+static int expert_dump(void);
 
 static io_source_t expert_io1_device = {
-    CARTRIDGE_NAME_EXPERT,
-    IO_DETACH_CART,
-    NULL,
-    0xde00, 0xde01, 0xff,
-    0, /* read is never valid */
-    expert_io1_store,
-    expert_io1_read,
-    expert_io1_peek,
-    NULL, /* TODO: dump */
-    CARTRIDGE_EXPERT,
-    0,
-    0
+    CARTRIDGE_NAME_EXPERT, /* name of the device */
+    IO_DETACH_CART,        /* use cartridge ID to detach the device when involved in a read-collision */
+    IO_DETACH_NO_RESOURCE, /* does not use a resource for detach */
+    0xde00, 0xde01, 0xff,  /* range for the device, regs:$de00-$de01 */
+    0,                     /* read is never valid */
+    expert_io1_store,      /* store function */
+    NULL,                  /* NO poke function */
+    expert_io1_read,       /* read function */
+    expert_io1_peek,       /* peek function */
+    expert_dump,           /* device state information dump function */
+    CARTRIDGE_EXPERT,      /* cartridge ID */
+    IO_PRIO_NORMAL,        /* normal priority, device read needs to be checked for collisions */
+    0                      /* insertion order, gets filled in by the registration function */
 };
 
 static const export_resource_t export_res = {
@@ -298,11 +303,39 @@ static int expert_mode_changed(int mode, void *param)
     return 0;
 }
 
+/* FIXME: this still needs to be tweaked to match the hardware */
+static RAMINITPARAM ramparam = {
+    .start_value = 255,
+    .value_invert = 2,
+    .value_offset = 1,
+
+    .pattern_invert = 0x100,
+    .pattern_invert_value = 255,
+
+    .random_start = 0,
+    .random_repeat = 0,
+    .random_chance = 0,
+};
+
+void expert_powerup(void)
+{
+    DBG(("expert_powerup\n"));
+    if ((expert_filename != NULL) && (*expert_filename != 0)) {
+        /* do not init ram if a file is used for ram content (like battery backup) */
+        return;
+    }
+    if (expert_ram) {
+        DBG(("expert_powerup ram clear\n"));
+        ram_init_with_pattern(expert_ram, EXPERT_RAM_SIZE, &ramparam);
+    }
+}
+
 static int expert_activate(void)
 {
     if (expert_ram == NULL) {
         expert_ram = lib_malloc(EXPERT_RAM_SIZE);
     }
+    ram_init_with_pattern(expert_ram, EXPERT_RAM_SIZE, &ramparam);
 
     if (!util_check_null_string(expert_filename)) {
         log_message(LOG_DEFAULT, "Reading Expert Cartridge image %s.", expert_filename);
@@ -412,7 +445,7 @@ static int set_expert_filename(const char *name, void *param)
 
 /* ---------------------------------------------------------------------*/
 
-void expert_io1_store(uint16_t addr, uint8_t value)
+static void expert_io1_store(uint16_t addr, uint8_t value)
 {
     DBG(("EXPERT: io1 wr %04x (%d)\n", addr, value));
     if ((cartmode == EXPERT_MODE_ON) && (expert_register_enabled == 1)) {
@@ -423,7 +456,7 @@ void expert_io1_store(uint16_t addr, uint8_t value)
     }
 }
 
-uint8_t expert_io1_read(uint16_t addr)
+static uint8_t expert_io1_read(uint16_t addr)
 {
     expert_io1_device.io_source_valid = 0;
     DBG(("EXPERT: io1 rd %04x (%d)\n", addr, expert_ramh_enabled));
@@ -436,8 +469,17 @@ uint8_t expert_io1_read(uint16_t addr)
     return 0;
 }
 
-uint8_t expert_io1_peek(uint16_t addr)
+static uint8_t expert_io1_peek(uint16_t addr)
 {
+    return 0;
+}
+
+static int expert_dump(void)
+{
+    mon_out("Cartridge mode: %s, Register is %s\n",
+            expert_mode[cartmode], expert_register_enabled ? "enabled" : "disabled");
+    mon_out("RAM: %s, %s\n", expert_ramh_enabled ? "mapped in" : "not mapped in",
+            expert_ram_writeable ? "writeable" : "readonly");
     return 0;
 }
 
@@ -659,6 +701,7 @@ int expert_bin_attach(const char *filename, uint8_t *rawcart)
     if (expert_bin_load(filename, rawcart) < 0) {
         return -1;
     }
+    /* set the resource */
     if (set_expert_filename(filename, NULL) < 0) {
         return -1;
     }
@@ -717,6 +760,7 @@ int expert_crt_attach(FILE *fd, uint8_t *rawcart, const char *filename)
     if (expert_crt_load(fd, rawcart) < 0) {
         return -1;
     }
+    /* set the resource */
     if (set_expert_filename(filename, NULL) < 0) {
         return -1;
     }
@@ -764,10 +808,12 @@ static int expert_load_image(void)
     FILE *fd;
 
     if (crt_getid(expert_filename) == CARTRIDGE_EXPERT) {
+        DBG(("EXPERT: detected .crt format\n"));
         fd = fopen(expert_filename, MODE_READ);
         res = expert_crt_load(fd, expert_ram);
         fclose(fd);
     } else {
+        DBG(("EXPERT: detected .bin format\n"));
         res = expert_bin_load(expert_filename, expert_ram);
     }
     return res;
@@ -822,7 +868,7 @@ int expert_disable(void)
    ARRAY | RAM             | 8192 BYTES of RAM data
  */
 
-static char snap_module_name[] = "CARTEXPERT";
+static const char snap_module_name[] = "CARTEXPERT";
 #define SNAP_MAJOR   0
 #define SNAP_MINOR   0
 
@@ -861,7 +907,7 @@ int expert_snapshot_read_module(snapshot_t *s)
     }
 
     /* Do not accept versions higher than current */
-    if (vmajor > SNAP_MAJOR || vminor > SNAP_MINOR) {
+    if (snapshot_version_is_bigger(vmajor, vminor, SNAP_MAJOR, SNAP_MINOR)) {
         snapshot_set_error(SNAPSHOT_MODULE_HIGHER_VERSION);
         snapshot_module_close(m);
         return -1;

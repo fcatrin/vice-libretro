@@ -6,6 +6,7 @@
 # Written by
 #  Spiro Trikaliotis <spiro.trikaliotis@gmx.de>
 #  Marco van den Heuvel <blackystardust68@yahoo.com>
+#  Bas Wassink <b.wassink@ziggo.nl>
 #
 # This file is part of VICE, the Versatile Commodore Emulator.
 # See README for copyright notice.
@@ -49,12 +50,6 @@ generate_configure_in() {
         if [ $2 -gt 12 ]; then
             configure_needs_ac=yes
         fi
-    fi
-
-    if test x"$configure_needs_ac" = "xyes"; then
-        sed s/AM_CONFIG_HEADER/AC_CONFIG_HEADERS/g <configure.proto >configure.ac
-    else
-        cp configure.proto configure.ac
     fi
 }
 
@@ -173,29 +168,15 @@ do_automake() {
 }
 
 buildfiles() {
-    FILES_TO_REMEMBER="INSTALL"
-
-    # Save some files which should not be overwritten
 
     if [ -f configure.ac ] || [ -f configure.in ]; then
-
-        for A in $FILES_TO_REMEMBER; do
-            [ -e "$A" ] && mv -f "$A" "$A.backup"
-        done
-
         do_aclocal
-
         do_autoconf
         do_autoheader
         do_automake
-
-        # Restore the files which should not be overwritten
-
-        for A in $FILES_TO_REMEMBER; do
-            [ -e "$A.backup" ] && mv -f "$A.backup" "$A"
-        done
     fi
 }
+
 
 # Script entry point
 
@@ -219,9 +200,10 @@ IFS="."
 generate_configure_in $automake_version
 IFS=$old_IFS
 
-SUBDIRECTORIES=`sed -ne "s/.*AC_CONFIG_SUBDIRS(\(.*\)).*/\1/p" configure.ac`
+SUBDIRECTORIES=$(sed -ne "s/.*AC_CONFIG_SUBDIRS(\(.*\)).*/\1/p" configure.ac)
+SUBDIRECTORIES2=$(sed -ne "s/.*AX_SUBDIRS_CONFIGURE(\[\(.*\)],.*).*/\1/p" configure.ac)
 
-for A in $SUBDIRECTORIES; do
+for A in $SUBDIRECTORIES $SUBDIRECTORIES2; do
     (
     cd $A
     buildfiles

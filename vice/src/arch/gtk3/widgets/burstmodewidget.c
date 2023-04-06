@@ -33,13 +33,13 @@
 
 #include <gtk/gtk.h>
 
-#include "lib.h"
-#include "widgethelpers.h"
-#include "debug_gtk3.h"
-#include "resources.h"
 #include "basewidgets.h"
-#include "openfiledialog.h"
+#include "debug_gtk3.h"
+#include "lib.h"
 #include "machine.h"
+#include "openfiledialog.h"
+#include "resources.h"
+#include "widgethelpers.h"
 
 #include "burstmodewidget.h"
 
@@ -65,10 +65,11 @@ GtkWidget *burst_mode_widget_create(GtkWidget *parent)
     GtkWidget *grid;
     GtkWidget *group;
 
-    grid = uihelpers_create_grid_with_label("Burst Mode Modification", 1);
+    grid = vice_gtk3_grid_new_spaced_with_label(
+            -1, -1, "Burst Mode Modification", 1);
     group = vice_gtk3_resource_radiogroup_new("BurstMod", burst_modes,
             GTK_ORIENTATION_VERTICAL);
-    g_object_set(group, "margin-left", 16, NULL);
+    gtk_widget_set_margin_start(group, 16);
     gtk_grid_attach(GTK_GRID(grid), group, 0, 1, 1, 1);
 
     gtk_widget_show_all(grid);

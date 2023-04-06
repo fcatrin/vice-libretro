@@ -31,17 +31,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef AMIGA_SUPPORT
-/* includes? */
-#endif
-
 #if defined(UNIX_COMPILE) || defined(BEOS_COMPILE)
 # include <unistd.h>
 # include <sys/stat.h>
 # include <sys/types.h>
 #endif
 
-#ifdef WIN32_COMPILE
+#ifdef WINDOWS_COMPILE
 # include <direct.h>
 #endif
 
@@ -56,7 +52,7 @@
  */
 int archdep_rmdir(const char *pathname)
 {
-#ifdef ARCHDEP_OS_WINDOWS
+#ifdef WINDOWS_COMPILE
     return _rmdir(pathname);
 #else
     return rmdir(pathname);

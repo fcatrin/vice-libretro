@@ -33,6 +33,7 @@
 
 
 GtkWidget *vsid_tune_info_widget_create(void);
+void vsid_tune_info_widget_update(void);
 
 void vsid_tune_info_widget_set_name(const char *name);
 void vsid_tune_info_widget_set_author(const char *author);
@@ -44,7 +45,6 @@ void vsid_tune_info_widget_set_model(int model);
 void vsid_tune_info_widget_set_sync(int sync);
 void vsid_tune_info_widget_set_irq(const char *irq);
 void vsid_tune_info_widget_set_time(unsigned int sec);
-void vsid_tune_info_widget_set_driver(const char *text);
 void vsid_tune_info_widget_set_driver_addr(uint16_t addr);
 void vsid_tune_info_widget_set_load_addr(uint16_t addr);
 void vsid_tune_info_widget_set_init_addr(uint16_t addr);

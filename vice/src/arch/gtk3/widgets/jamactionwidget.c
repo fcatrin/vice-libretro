@@ -33,8 +33,8 @@
 
 #include <gtk/gtk.h>
 #include "debug_gtk3.h"
-#include "basewidgets.h"
-#include "widgethelpers.h"
+#include "machine.h"
+#include "vice_gtk3.h"
 
 #include "jamactionwidget.h"
 
@@ -42,30 +42,35 @@
 /** \brief  List of possible actions on a CPU JAM
  */
 static const vice_gtk3_radiogroup_entry_t actions[] = {
-    { "Show dialog", 0 },
-    { "Continue emulation", 1 },
-    { "Start monitor", 2 },
-    { "Soft RESET", 3 },
-    { "Hard RESET", 4 },
-    { "Quit emulator", 5 },
+    { "Show dialog",        MACHINE_JAM_ACTION_DIALOG },
+    { "Continue emulation", MACHINE_JAM_ACTION_CONTINUE },
+    { "Start monitor",      MACHINE_JAM_ACTION_MONITOR },
+    { "Soft RESET",         MACHINE_JAM_ACTION_RESET },
+    { "Hard RESET",         MACHINE_JAM_ACTION_HARD_RESET },
+    { "Quit emulator",      MACHINE_JAM_ACTION_QUIT },
     { NULL, -1 }
 };
 
 
 /** \brief  Create widget to control the "JAMAction" resource
  *
+ * \param[in]   parent  parent widget (unused)
+ *
  * \return  GtkGrid
  */
-GtkWidget *jam_action_widget_create(void)
+GtkWidget *jam_action_widget_create(GtkWidget *parent)
 {
     GtkWidget *grid;
     GtkWidget *selection;
 
-    grid = uihelpers_create_grid_with_label("Default action on CPU JAM", 1);
+    grid = vice_gtk3_grid_new_spaced_with_label(
+            -1, -1,
+            "Default action on CPU JAM",
+            1);
 
     selection = vice_gtk3_resource_radiogroup_new("JAMAction", actions,
             GTK_ORIENTATION_VERTICAL);
-    g_object_set(selection, "margin-left", 16, NULL);
+    gtk_widget_set_margin_start(selection, 16);
     gtk_grid_attach(GTK_GRID(grid), selection, 0, 1, 1,1);
 
     gtk_widget_show_all(grid);

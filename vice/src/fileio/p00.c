@@ -39,7 +39,6 @@
 #include "archdep.h"
 #include "cbmdos.h"
 #include "fileio.h"
-#include "ioutil.h"
 #include "lib.h"
 #include "log.h"
 #include "p00.h"
@@ -103,7 +102,7 @@ static int p00_check_name(const char *name)
 }
 
 static int p00_read_header(struct rawfile_info_s *info, uint8_t *cbmname_return,
-                           unsigned int *recsize_return)
+                           int *recsize_return)
 {
     uint8_t hdr[P00_HDR_LEN];
 
@@ -119,7 +118,7 @@ static int p00_read_header(struct rawfile_info_s *info, uint8_t *cbmname_return,
     memcpy(cbmname_return, hdr + P00_HDR_CBMNAME_OFFSET, P00_HDR_CBMNAME_LEN);
 
     if (recsize_return != NULL) {
-        *recsize_return = (unsigned int)hdr[P00_HDR_RECORDSIZE_OFFSET];
+        *recsize_return = (int)hdr[P00_HDR_RECORDSIZE_OFFSET];
     }
 
     return 0;
@@ -137,7 +136,7 @@ static int p00_write_header(struct rawfile_info_s *info, const uint8_t *cbmname,
     memcpy(hdr + P00_HDR_CBMNAME_OFFSET, cbmname, P00_HDR_CBMNAME_LEN);
     hdr[P00_HDR_RECORDSIZE_OFFSET] = (uint8_t)recsize;
 
-    if (rawfile_seek_set(info, 0) != 0) {
+    if (rawfile_seek(info, 0, SEEK_SET) != 0) {
         return -1;
     }
 
@@ -161,20 +160,20 @@ static void p00_pad_a0(uint8_t *slot)
 
 static char *p00_file_find(const char *file_name, const char *path)
 {
-    struct ioutil_dir_s *ioutil_dir;
+    archdep_dir_t *host_dir;
     struct rawfile_info_s *rawfile;
     uint8_t p00_header_file_name[P00_HDR_CBMNAME_LEN];
-    char *name, *alloc_name = NULL;
+    const char *name;
+    char *alloc_name = NULL;
     int rc;
 
-    ioutil_dir = ioutil_opendir(path, IOUTIL_OPENDIR_ALL_FILES);
-
-    if (ioutil_dir == NULL) {
+    host_dir = archdep_opendir(path, ARCHDEP_OPENDIR_ALL_FILES);
+    if (host_dir == NULL) {
         return NULL;
     }
 
     while (1) {
-        name = ioutil_readdir(ioutil_dir);
+        name = archdep_readdir(host_dir);
 
         if (name == NULL) {
             break;
@@ -201,7 +200,7 @@ static char *p00_file_find(const char *file_name, const char *path)
             lib_free(cname);
 
             if (equal > 0) {
-                alloc_name = lib_stralloc(name);
+                alloc_name = lib_strdup(name);
             } else {
                 rc = -1;
             }
@@ -214,7 +213,7 @@ static char *p00_file_find(const char *file_name, const char *path)
         }
     }
 
-    ioutil_closedir(ioutil_dir);
+    archdep_closedir(host_dir);
 
     return alloc_name;
 }
@@ -336,7 +335,7 @@ char *p00_filename_create(const char *file_name, unsigned int type)
             break;
     }
 
-    p00name = util_concat(main_name, FSDEV_EXT_SEP_STR, typeext, "00", NULL);
+    p00name = util_concat(main_name, ".", typeext, "00", NULL);
     lib_free(main_name);
 
     return p00name;
@@ -354,7 +353,7 @@ static char *p00_file_create(const char *file_name, const char *path,
         if (util_file_exists(p00name) == 0) {
             break;
         }
-        sprintf(&p00name[strlen(p00name) - 2], "%02i", i);
+        sprintf(&p00name[strlen(p00name) - 2], "%02u", i);
     }
 
     if (i >= 100) {
@@ -365,28 +364,38 @@ static char *p00_file_create(const char *file_name, const char *path,
 }
 
 fileio_info_t *p00_open(const char *file_name, const char *path,
-                        unsigned int command, unsigned int open_type)
+                        unsigned int command, unsigned int open_type,
+                        int *reclenp)
 {
     char rname[20]; /* FIXME */
     fileio_info_t *info;
     struct rawfile_info_s *rawfile;
     char *fname = NULL;
     int type;
+    int reclen = 0;
 
     if (command & FILEIO_COMMAND_FSNAME) {
-        fname = lib_stralloc(file_name);
+        fname = lib_strdup(file_name);
     } else {
         switch (command & FILEIO_COMMAND_MASK) {
             case FILEIO_COMMAND_STAT:
             case FILEIO_COMMAND_READ:
+            case FILEIO_COMMAND_READ_WRITE:
             case FILEIO_COMMAND_APPEND:
             case FILEIO_COMMAND_APPEND_READ:
                 fname = p00_file_find(file_name, path);
                 break;
             case FILEIO_COMMAND_WRITE:
+            case FILEIO_COMMAND_OVERWRITE:
                 fname = p00_file_create(file_name, path, open_type);
                 break;
         }
+    }
+
+    if (fname == NULL &&
+            (command & FILEIO_COMMAND_MASK) == FILEIO_COMMAND_READ_WRITE) {
+        fname = p00_file_create(file_name, path, open_type);
+        command = (command & ~FILEIO_COMMAND_MASK) | FILEIO_COMMAND_WRITE;
     }
 
     if (fname == NULL) {
@@ -405,14 +414,15 @@ fileio_info_t *p00_open(const char *file_name, const char *path,
     switch (command & FILEIO_COMMAND_MASK) {
         case FILEIO_COMMAND_STAT:
         case FILEIO_COMMAND_READ:
-            if (type < 0 || p00_read_header(rawfile, (uint8_t *)rname, NULL) < 0) {
+        case FILEIO_COMMAND_READ_WRITE:
+            if (type < 0 || p00_read_header(rawfile, (uint8_t *)rname, &reclen) < 0) {
                 rawfile_destroy(rawfile);
                 return NULL;
             }
             break;
         case FILEIO_COMMAND_APPEND:
         case FILEIO_COMMAND_APPEND_READ:
-            if (type < 0 || p00_read_header(rawfile, (uint8_t *)rname, NULL) < 0) {
+            if (type < 0 || p00_read_header(rawfile, (uint8_t *)rname, &reclen) < 0) {
                 rawfile_destroy(rawfile);
                 return NULL;
             }
@@ -423,17 +433,30 @@ fileio_info_t *p00_open(const char *file_name, const char *path,
 */
             break;
         case FILEIO_COMMAND_WRITE:
+        case FILEIO_COMMAND_OVERWRITE:
+            reclen = reclenp ? *reclenp : 0;
             memset(rname, 0, sizeof(rname));
             strncpy(rname, file_name, 16);
-            if (p00_write_header(rawfile, (uint8_t *)rname, 0) < 0) {
+            if (p00_write_header(rawfile, (uint8_t *)rname, reclen) < 0) {
                 rawfile_destroy(rawfile);
                 return NULL;
             }
             break;
     }
 
+    if (open_type == FILEIO_TYPE_REL && reclenp) {
+        if (*reclenp == 0) {
+            *reclenp = reclen;
+        } else if (*reclenp != reclen) {
+            /* The given record length does not match the stored record
+             * length */
+            log_verbose("p00_open: record size: found %d != expected %d => record size mismatch\n", reclen, *reclenp);
+            return NULL;
+        }
+    }
+
     info = lib_malloc(sizeof(fileio_info_t));
-    info->name = (uint8_t *)lib_stralloc(rname);
+    info->name = (uint8_t *)lib_strdup(rname);
     info->length = (unsigned int)strlen((char *)(info->name));
     info->type = (unsigned int)type;
     info->format = FILEIO_FORMAT_P00;
@@ -543,4 +566,25 @@ unsigned int p00_scratch(const char *file_name, const char *path)
 unsigned int p00_get_bytes_left(struct fileio_info_s *info)
 {
     return rawfile_get_bytes_left(info->rawfile);
+}
+
+unsigned int p00_seek(struct fileio_info_s *info, off_t offset, int whence)
+{
+    if (whence == SEEK_SET) {
+        offset += P00_HDR_LEN;
+    }
+
+    /* Note: this has no protection against seeking into the P00 header */
+
+    return rawfile_seek(info->rawfile, offset, whence);
+}
+
+unsigned int p00_tell(struct fileio_info_s *info)
+{
+    long pos = rawfile_tell(info->rawfile);
+
+    if (pos == -1)
+        return -1;
+
+    return (unsigned int)pos - P00_HDR_LEN;
 }

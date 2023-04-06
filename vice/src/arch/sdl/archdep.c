@@ -1,9 +1,11 @@
+/** \file   archdep.c
+ * \brief   Miscellaneous system-specific stuff for SDL
+ *
+ * \author  Marco van den Heuvel <blackystardust68@yahoo.com>
+ * \author  Bas Wassink <b.wassink@ziggo.nl>
+ */
+
 /*
- * archdep.c - Miscellaneous system-specific stuff.
- *
- * Written by
- *  Marco van den Heuvel <blackystardust68@yahoo.com>
- *
  * This file is part of VICE, the Versatile Commodore Emulator.
  * See README for copyright notice.
  *
@@ -27,52 +29,76 @@
 #include "vice.h"
 
 #include "vice_sdl.h"
+#include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#ifdef HAVE_STRINGS_H
+#include <strings.h>
+#endif
+#include <ctype.h>
+#include <errno.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include "archdep.h"
+#include "findpath.h"
+#include "kbd.h"
+#include "keyboard.h"
+#include "lib.h"
+#include "log.h"
+#include "machine.h"
+#include "ui.h"
+#include "util.h"
+
+/* FIXME: includes for beos */
+/* FIXME: includes for os/2 */
 
 /* These functions are defined in the files included below and
    used lower down. */
 static int archdep_init_extra(int *argc, char **argv);
 static void archdep_shutdown_extra(void);
 
-#ifdef AMIGA_SUPPORT
-#include "archdep_amiga.c"
-#endif
-
-#ifdef BEOS_COMPILE
-#include "archdep_beos.c"
-#endif
-
-#ifdef __OS2__
-#include "archdep_os2.c"
-#endif
-
-#ifdef UNIX_COMPILE
-#include "archdep_unix.c"
-#endif
-
-#ifdef WIN32_COMPILE
-#include "archdep_win32.c"
-#endif
-
 #include "kbd.h"
+#include "log.h"
 
 #ifndef SDL_REALINIT
 #define SDL_REALINIT SDL_Init
 #endif
 
-/*
- * XXX: this will get fixed once the code in this file is moved into
- *      src/arch/shared
- */
-#include "../shared/archdep_atexit.h"
-#include "../shared/archdep_create_user_config_dir.h"
 
+/******************************************************************************/
 
+#ifdef WINDOWS_COMPILE
+/* for O_BINARY */
+#include <fcntl.h>
+#endif
+
+/* called from archdep.c:archdep_init */
+static int archdep_init_extra(int *argc, char **argv)
+{
+#if defined(WINDOWS_COMPILE)
+    _fmode = O_BINARY;
+
+    _setmode(_fileno(stdin), O_BINARY);
+    _setmode(_fileno(stdout), O_BINARY);
+#endif
+    return 0;
+}
+
+/* called from archdep.c:archdep_shutdown */
+static void archdep_shutdown_extra(void)
+{
+}
+
+/******************************************************************************/
 
 int archdep_init(int *argc, char **argv)
 {
     archdep_program_path_set_argv0(argv[0]);
 
+    archdep_create_user_cache_dir();
     archdep_create_user_config_dir();
 
     if (SDL_REALINIT(SDL_INIT_VIDEO | SDL_INIT_TIMER) < 0) {
@@ -86,9 +112,9 @@ int archdep_init(int *argc, char **argv)
      * I'm not sure this actually registers SDL_Quit() as the last atexit()
      * call, but it appears to work at least (BW)
      */
-    if (archdep_vice_atexit(SDL_Quit) != 0) {
+    if (atexit(SDL_Quit) != 0) {
         log_error(LOG_ERR,
-                "failed to register SDL_Quit() with archdep_vice_atexit().");
+                "failed to register SDL_Quit() with atexit().");
         archdep_vice_exit(1);
     }
 
@@ -98,10 +124,19 @@ int archdep_init(int *argc, char **argv)
 
 void archdep_shutdown(void)
 {
-    archdep_program_name_free();
+    /* free memory used by the exec path */
     archdep_program_path_free();
+    /* free memory used by the exec name */
+    archdep_program_name_free();
+    /* free memory used by the boot path */
     archdep_boot_path_free();
+    /* free memory used by the home path */
     archdep_home_path_free();
+    /* free memory used by the cache files path */
+    archdep_user_cache_path_free();
+    /* free memory used by the config files path */
+    archdep_user_config_path_free();
+    /* free memory used by the sysfile pathlist */
     archdep_default_sysfile_pathlist_free();
 
 #ifdef HAVE_NETWORK

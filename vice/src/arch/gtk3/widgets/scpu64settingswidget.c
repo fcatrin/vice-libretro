@@ -47,12 +47,12 @@
 /** \brief  List of SCPU64 SIMM sizes
  */
 static const vice_gtk3_combo_entry_int_t simm_sizes[] = {
-    { "0 MB", 0 },
-    { "1 MB", 1 },
-    { "4 MB", 4 },
-    { "8 MB", 8 },
-    { "16 MB", 16 },
-    { NULL, -1 }
+    { "0MiB",   0 },
+    { "1MiB",   1 },
+    { "4MiB",   4 },
+    { "8MiB",   8 },
+    { "16MiB",  16 },
+    { NULL,     -1 }
 };
 
 
@@ -66,7 +66,7 @@ static GtkWidget *create_indented_label(const char *text)
 {
     GtkWidget *label = gtk_label_new(text);
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    g_object_set(label, "margin-left", 16, NULL);
+    gtk_widget_set_margin_start(label, 16);
     return label;
 }
 

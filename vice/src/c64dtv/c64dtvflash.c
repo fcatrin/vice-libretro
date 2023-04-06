@@ -46,11 +46,7 @@
 
 #include "c64dtvflash.h"
 
-#ifndef AMIGA_SUPPORT
 #define DTVROM_NAME_DEFAULT   "dtvrom.bin"
-#else
-#define DTVROM_NAME_DEFAULT   "PROGDIR:C64DTV/dtvrom.bin"
-#endif
 
 #ifdef DEBUG
 static log_t c64dtvflash_log = LOG_ERR;
@@ -108,7 +104,10 @@ void c64dtvflash_store(int addr, uint8_t value)
     int i, j, k;
 #ifdef DEBUG
     if (flash_log_enabled) {
-        log_message(c64dtvflash_log, "flash_store: addr %x, value %x, mode %i\n", addr, value, c64dtvflash_state);
+        log_message(c64dtvflash_log,
+                "flash_store: addr %x, value %x, mode %i\n",
+                (unsigned int)addr, value, c64dtvflash_state);
+
     }
 #endif
     switch (c64dtvflash_state) {
@@ -185,7 +184,9 @@ void c64dtvflash_store(int addr, uint8_t value)
                     if (c64dtvflash_mem_lock[paddr_to_sector(addr)]) {
 #ifdef DEBUG
                         if (flash_log_enabled) {
-                            log_message(c64dtvflash_log, "flash: ignoring erase (locked) %06x-%06x\n", j, k);
+                            log_message(c64dtvflash_log,
+                                    "flash: ignoring erase (locked) %06x-%06x\n",
+                                    (unsigned int)j, (unsigned int)k);
                         }
 #endif
                     } else {
@@ -194,7 +195,9 @@ void c64dtvflash_store(int addr, uint8_t value)
                         }
 #ifdef DEBUG
                         if (flash_log_enabled) {
-                            log_message(c64dtvflash_log, "flash: erased %06x-%06x\n", j, k);
+                            log_message(c64dtvflash_log,
+                                    "flash: erased %06x-%06x\n",
+                                    (unsigned int)j, (unsigned int)k);
                         }
 #endif
                     }
@@ -234,14 +237,18 @@ void c64dtvflash_store(int addr, uint8_t value)
             if (c64dtvflash_mem_lock[paddr_to_sector(addr)]) {
 #ifdef DEBUG
                 if (flash_log_enabled) {
-                    log_message(c64dtvflash_log, "flash: ignoring byte program (locked) %02x to %06x\n", value, addr);
+                    log_message(c64dtvflash_log,
+                            "flash: ignoring byte program (locked) %02x to %06x\n",
+                            value, (unsigned int)addr);
                 }
 #endif
             } else {
                 c64dtvflash_mem[addr] &= value;
 #ifdef DEBUG
                 if (flash_log_enabled) {
-                    log_message(c64dtvflash_log, "flash: written %02x to %06x\n", c64dtvflash_mem[addr], addr);                    /* DEBUG */
+                    log_message(c64dtvflash_log,
+                            "flash: written %02x to %06x\n",
+                            c64dtvflash_mem[addr], (unsigned int)addr);                    /* what is this? -> DEBUG */
                 }
 #endif
             }
@@ -265,7 +272,9 @@ void c64dtvflash_store(int addr, uint8_t value)
             } else {
 #ifdef DEBUG
                 if (flash_log_enabled) {
-                    log_message(c64dtvflash_log, "flash: program protection register %x = %02x (unimplemented)\n", addr, value);
+                    log_message(c64dtvflash_log,
+                            "flash: program protection register %x = %02x (unimplemented)\n",
+                            (unsigned int)addr, value);
                 }
 #endif
             }
@@ -288,7 +297,9 @@ uint8_t c64dtvflash_read(int addr)
     if (c64dtvflash_state != FLASH_IDLE) {
 #ifdef DEBUG
         if (flash_log_enabled) {
-            log_message(c64dtvflash_log, "flash_read: addr %x, mode %i\n", addr, c64dtvflash_state);
+            log_message(c64dtvflash_log,
+                    "flash_read: addr %x, mode %i\n",
+                    (unsigned int)addr, c64dtvflash_state);
         }
 #endif
     }
@@ -531,9 +542,7 @@ static int set_c64dtvflash_filename(const char *name, void *param)
 {
     int retval = 0;
 
-#ifndef AMIGA_SUPPORT
     char *complete_path = NULL;
-#endif
 
     if (c64dtvflash_filename != NULL && name != NULL && strcmp(name, c64dtvflash_filename) == 0) {
         return 0;
@@ -551,21 +560,17 @@ static int set_c64dtvflash_filename(const char *name, void *param)
         }
     }
 
-#ifndef AMIGA_SUPPORT
     /* check if the given rom file can be found in a sys dir and set resource with absolute path */
     if (name != NULL && *name != '\0' && !util_file_exists(name)) {
-        sysfile_locate(name, &complete_path);
+        sysfile_locate(name, "C64DTV", &complete_path);
         if (complete_path != NULL) {
             name = complete_path;
         }
     }
-#endif
 
     util_string_set(&c64dtvflash_filename, name);
 
-#ifndef AMIGA_SUPPORT
     lib_free(complete_path);
-#endif
 
     if (c64dtvflash_filename != NULL && *c64dtvflash_filename != '\0') {
         retval = c64dtvflash_load_rom();

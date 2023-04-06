@@ -60,34 +60,53 @@
 
 #endif
 
+/* Fragment sizes */
+#define SOUND_FRAGMENT_VERY_SMALL    0
+#define SOUND_FRAGMENT_SMALL         1
+#define SOUND_FRAGMENT_MEDIUM        2
+#define SOUND_FRAGMENT_LARGE         3
+#define SOUND_FRAGMENT_VERY_LARGE    4
+
+/* Sound output modes */
+#define SOUND_OUTPUT_SYSTEM   0
+#define SOUND_OUTPUT_MONO     1
+#define SOUND_OUTPUT_STEREO   2
 
 /* Sound defaults.  */
 #ifdef __LIBRETRO__
-#define SOUND_SAMPLE_RATE 44100
-#define SOUND_CHANNELS_MAX 1
-#define SOUND_BUFSIZE 2048 // 1024 will crash with 96kHz
-#define SOUND_SIDS_MAX 4
-#define SOUND_SAMPLE_BUFFER_SIZE 0
+
+#define SOUND_SAMPLE_RATE 48000
+#define SOUND_SAMPLE_BUFFER_SIZE 20
+#define SOUND_FRAGMENT_SIZE SOUND_FRAGMENT_SMALL
 
 #else
 
-#ifdef ANDROID_COMPILE
-#define SOUND_SAMPLE_RATE 22050
+#if defined(MACOS_COMPILE)
+#define SOUND_SAMPLE_RATE 48000
+#define SOUND_SAMPLE_BUFFER_SIZE 20
+#define SOUND_FRAGMENT_SIZE SOUND_FRAGMENT_VERY_SMALL
 #else
-#define SOUND_SAMPLE_RATE 44100
+#define SOUND_SAMPLE_RATE 48000
+#define SOUND_SAMPLE_BUFFER_SIZE 30
+#define SOUND_FRAGMENT_SIZE SOUND_FRAGMENT_MEDIUM
 #endif
+
+#endif /* __LIBRETRO__ */
 
 #define SOUND_CHANNELS_MAX 2
-#define SOUND_BUFSIZE 32768
-#define SOUND_SIDS_MAX 4
 
-#ifdef __OS2__
-# define SOUND_SAMPLE_BUFFER_SIZE       400
-#endif
-#ifndef SOUND_SAMPLE_BUFFER_SIZE
-# define SOUND_SAMPLE_BUFFER_SIZE       100
-#endif
-#endif // __LIBRETRO__
+/** \brief  Maximum number of SIDs supported by the emulation.
+ */
+#define SOUND_SIDS_MAX 8
+
+/** \brief  Maximum number of SIDs supported by PSID files
+ *
+ * Maximum number of SIDs for .psid files and thus VSID.
+ */
+#define SOUND_SIDS_MAX_PSID 3
+
+#define SOUND_CHIPS_MAX 20
+
 
 /* largest value in the UIs. also used by VSID as default */
 #define SOUND_SAMPLE_MAX_BUFFER_SIZE    350
@@ -95,9 +114,8 @@
 #define SOUND_RECORD_DEVICE     0
 #define SOUND_PLAYBACK_DEVICE   1
 
-/* I need this to serialize close_sound and enablesound/sound_open in
-   the OS/2 Multithreaded environment                              */
 extern int sound_state_changed;
+extern int sound_playdev_reopen;
 extern int sid_state_changed;
 
 /* device structure */
@@ -126,6 +144,8 @@ typedef struct sound_device_s {
     int need_attenuation;
     /* maximum amount of channels */
     int max_channels;
+    /* Can this device be relied on as the emulator timing source */
+    bool is_timing_source;
 } sound_device_t;
 
 static inline int16_t sound_audio_mix(int ch1, int ch2)
@@ -149,28 +169,10 @@ static inline int16_t sound_audio_mix(int ch1, int ch2)
     return (int16_t)-((-(ch1) + -(ch2)) - (-(ch1) * -(ch2) / 32768));
 }
 
-/* Sound adjustment types.  */
-#define SOUND_ADJUST_DEFAULT   -1
-#define SOUND_ADJUST_FLEXIBLE   0
-#define SOUND_ADJUST_ADJUSTING  1
-#define SOUND_ADJUST_EXACT      2
-
-/* Fragment sizes */
-#define SOUND_FRAGMENT_VERY_SMALL    0
-#define SOUND_FRAGMENT_SMALL         1
-#define SOUND_FRAGMENT_MEDIUM        2
-#define SOUND_FRAGMENT_LARGE         3
-#define SOUND_FRAGMENT_VERY_LARGE    4
-
-/* Sound output modes */
-#define SOUND_OUTPUT_SYSTEM   0
-#define SOUND_OUTPUT_MONO     1
-#define SOUND_OUTPUT_STEREO   2
-
 /* external functions for vice */
 extern void sound_init(unsigned int clock_rate, unsigned int ticks_per_frame);
 extern void sound_reset(void);
-extern double sound_flush(void);
+extern bool sound_flush(void);
 extern void sound_suspend(void);
 extern void sound_resume(void);
 extern int sound_open(void);
@@ -187,34 +189,25 @@ extern int sound_cmdline_options_init(void);
 
 
 /* device initialization prototypes */
-#ifndef __LIBRETRO__
-extern int sound_init_aix_device(void);
-extern int sound_init_allegro_device(void);
+#ifdef __LIBRETRO__
+extern int sound_init_retro_device(void);
+#else
 extern int sound_init_alsa_device(void);
-extern int sound_init_sb_device(void);
 extern int sound_init_dummy_device(void);
 extern int sound_init_dump_device(void);
 extern int sound_init_fs_device(void);
 extern int sound_init_wav_device(void);
-extern int sound_init_hpux_device(void);
-extern int sound_init_midas_device(void);
 extern int sound_init_sdl_device(void);
-extern int sound_init_sgi_device(void);
 extern int sound_init_sun_device(void);
 extern int sound_init_uss_device(void);
 extern int sound_init_dx_device(void);
-extern int sound_init_ce_device(void);
-extern int sound_init_vidc_device(void);
-extern int sound_init_mmos2_device(void);
 extern int sound_init_dart_device(void);
-extern int sound_init_dart2_device(void);
 extern int sound_init_beos_device(void);
 extern int sound_init_bsp_device(void);
 extern int sound_init_arts_device(void);
 extern int sound_init_wmm_device(void);
 extern int sound_init_movie_device(void);
 extern int sound_init_coreaudio_device(void);
-extern int sound_init_ahi_device(void);
 extern int sound_init_voc_device(void);
 extern int sound_init_iff_device(void);
 extern int sound_init_aiff_device(void);
@@ -222,12 +215,10 @@ extern int sound_init_mp3_device(void);
 extern int sound_init_flac_device(void);
 extern int sound_init_vorbis_device(void);
 extern int sound_init_pulse_device(void);
-#else
-extern int sound_init_retro_device(void);
-#endif
+#endif /* __LIBRETRO__ */
 
 /* internal function for sound device registration */
-extern int sound_register_device(sound_device_t *pdevice);
+extern int sound_register_device(const sound_device_t *pdevice);
 
 /* other internal functions used around sound -code */
 extern int sound_read(uint16_t addr, int chipno);
@@ -238,7 +229,6 @@ extern int sound_dump(int chipno);
 /* functions and structs implemented by each machine */
 typedef struct sound_s sound_t;
 extern char *sound_machine_dump_state(sound_t *psid);
-extern void sound_machine_prevent_clk_overflow(sound_t *psid, CLOCK sub);
 extern void sound_machine_enable(int enable);
 
 extern unsigned int sound_device_num(void);
@@ -246,17 +236,38 @@ extern const char *sound_device_name(unsigned int num);
 
 extern sound_t *sound_get_psid(unsigned int channel);
 
+/* This structure is used by sound producing chips/devices */
 typedef struct sound_chip_s {
+    /* sound chip open function */
     sound_t *(*open)(int chipno);
+
+    /* sound chip init function */
     int (*init)(sound_t *psid, int speed, int cycles_per_sec);
+
+    /* sound chip close function */
     void (*close)(sound_t *psid);
-    int (*calculate_samples)(sound_t **psid, int16_t *pbuf, int nr, int sound_output_channels, int sound_chip_channels, int *delta_t);
+
+    /* sound chip calculate samples function */
+    int (*calculate_samples)(sound_t **psid, int16_t *pbuf, int nr, int sound_output_channels, int sound_chip_channels, CLOCK *delta_t);
+
+    /* sound chip store function */
     void (*store)(sound_t *psid, uint16_t addr, uint8_t val);
+
+    /* sound chip read function */
     uint8_t (*read)(sound_t *psid, uint16_t addr);
+
+    /* sound chip reset function */
     void (*reset)(sound_t *psid, CLOCK cpu_clk);
+
+    /* sound chip 'is_cycle_based()' function */
     int (*cycle_based)(void);
+
+    /* sound chip 'get_amount_of_channels()' function */
     int (*channels)(void);
+
+    /* sound chip enabled flag */
     int chip_enabled;
+
 } sound_chip_t;
 
 extern uint16_t sound_chip_register(sound_chip_t *chip);

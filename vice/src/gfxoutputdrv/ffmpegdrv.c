@@ -1,9 +1,10 @@
+/** \file   ffmpegdrv.c
+ * \brie    Movie driver using FFMPEG library and screenshot API
+ *
+ * \author  Andreas Matthies <andreas.matthies@gmx.net>
+ */
+
 /*
- * ffmpegdrv.c - Movie driver using FFMPEG library and screenshot API.
- *
- * Written by
- *  Andreas Matthies <andreas.matthies@gmx.net>
- *
  * This file is part of VICE, the Versatile Commodore Emulator.
  * See README for copyright notice.
  *
@@ -27,6 +28,10 @@
 #include "vice.h"
 
 #ifdef HAVE_FFMPEG
+
+/* Disable clang deprecation warnings for ffmpeg - let's fix it when it stops working */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 #include <stdio.h>
 #include <string.h>
@@ -62,8 +67,8 @@ static gfxoutputdrv_codec_t avi_audio_codeclist[] = {
 };
 
 static gfxoutputdrv_codec_t mp4_audio_codeclist[] = {
-    { AV_CODEC_ID_MP3, "MP3" },
     { AV_CODEC_ID_AAC, "AAC" },
+    { AV_CODEC_ID_MP3, "MP3" },
     { AV_CODEC_ID_AC3, "AC3" },
     { 0, NULL }
 };
@@ -104,10 +109,10 @@ static gfxoutputdrv_codec_t none_codeclist[] = {
 gfxoutputdrv_format_t *ffmpegdrv_formatlist = NULL;
 gfxoutputdrv_format_t formats_to_test[] =
 {
-    { "avi", avi_audio_codeclist, avi_video_codeclist },
     { "mp4", mp4_audio_codeclist, mp4_video_codeclist },
-    { "matroska", mp4_audio_codeclist, mp4_video_codeclist },
     { "ogg", ogg_audio_codeclist, ogg_video_codeclist },
+    { "avi", avi_audio_codeclist, avi_video_codeclist },
+    { "matroska", mp4_audio_codeclist, mp4_video_codeclist },
     { "wav", NULL, NULL },
     { "mp3", NULL, none_codeclist }, /* formats expects png which fails in VICE */
     { "mp2", NULL, NULL },
@@ -167,12 +172,10 @@ static int set_container_format(const char *val, void *param)
 {
     int i;
 
-/* kludges to prevent crash at startup when using --help on the commandline */
-#ifndef STATIC_FFMPEG
+    /* kludge to prevent crash at startup when using --help on the commandline */
     if (ffmpegdrv_formatlist == NULL) {
         return 0;
     }
-#endif
 
     format_index = -1;
 
@@ -193,7 +196,7 @@ static int set_container_format(const char *val, void *param)
 
 static int set_audio_bitrate(int val, void *param)
 {
-    audio_bitrate = (CLOCK)val;
+    audio_bitrate = val;
 
     if ((audio_bitrate < VICE_FFMPEG_AUDIO_RATE_MIN)
         || (audio_bitrate > VICE_FFMPEG_AUDIO_RATE_MAX)) {
@@ -204,7 +207,7 @@ static int set_audio_bitrate(int val, void *param)
 
 static int set_video_bitrate(int val, void *param)
 {
-    video_bitrate = (CLOCK)val;
+    video_bitrate = val;
 
     if ((video_bitrate < VICE_FFMPEG_VIDEO_RATE_MIN)
         || (video_bitrate > VICE_FFMPEG_VIDEO_RATE_MAX)) {
@@ -242,7 +245,7 @@ static int set_video_halve_framerate(int value, void *param)
 /*---------- Resources ------------------------------------------------*/
 
 static const resource_string_t resources_string[] = {
-    { "FFMPEGFormat", "avi", RES_EVENT_NO, NULL,
+    { "FFMPEGFormat", "mp4", RES_EVENT_NO, NULL,
       &ffmpeg_format, set_container_format, NULL },
     RESOURCE_STRING_LIST_END
 };
@@ -254,9 +257,9 @@ static const resource_int_t resources_int[] = {
     { "FFMPEGVideoBitrate", VICE_FFMPEG_VIDEO_RATE_DEFAULT,
       RES_EVENT_NO, NULL,
       &video_bitrate, set_video_bitrate, NULL },
-    { "FFMPEGAudioCodec", AV_CODEC_ID_MP3, RES_EVENT_NO, NULL,
+    { "FFMPEGAudioCodec", AV_CODEC_ID_AAC, RES_EVENT_NO, NULL,
       &audio_codec, set_audio_codec, NULL },
-    { "FFMPEGVideoCodec", AV_CODEC_ID_MPEG4, RES_EVENT_NO, NULL,
+    { "FFMPEGVideoCodec", AV_CODEC_ID_H264, RES_EVENT_NO, NULL,
       &video_codec, set_video_codec, NULL },
     { "FFMPEGVideoHalveFramerate", 0, RES_EVENT_NO, NULL,
       &video_halve_framerate, set_video_halve_framerate, NULL },
@@ -313,7 +316,7 @@ static void close_stream(OutputStream *ost)
 /* audio stream encoding */
 /*-----------------------*/
 
-static AVFrame *alloc_audio_frame(enum AVSampleFormat sample_fmt, 
+static AVFrame *alloc_audio_frame(enum AVSampleFormat sample_fmt,
     uint64_t channel_layout,
     int sample_rate, int nb_samples)
 {
@@ -446,13 +449,8 @@ static int ffmpegmovie_init_audio(int speed, int channels, soundmovie_buffer_t *
     }
     c->channel_layout = (channels == 1 ? AV_CH_LAYOUT_MONO : AV_CH_LAYOUT_STEREO);
     c->channels = VICE_P_AV_GET_CHANNEL_LAYOUT_NB_CHANNELS(c->channel_layout);
- 
-#ifdef _MSC_VER
-    st->time_base.num = 1;
-	st->time_base.den = c->sample_rate;
-#else
+
     st->time_base = (AVRational){ 1, c->sample_rate };
-#endif
     audio_st.st = st;
     audio_st.next_pts = 0;
     audio_st.samples_count = 0;
@@ -524,10 +522,6 @@ static int ffmpegmovie_encode_audio(soundmovie_buffer_t *audio_in)
     AVFrame *frame;
     int ret;
 
-#ifdef _MSC_VER
-    AVRational tmp;
-#endif
-
     if (audio_st.st) {
         audio_st.frame->pts = audio_st.next_pts;
         audio_st.next_pts += audio_in->size;
@@ -565,13 +559,7 @@ static int ffmpegmovie_encode_audio(soundmovie_buffer_t *audio_in)
                 return -1;
             }
             frame = audio_st.frame;
-#ifdef _MSC_VER
-            tmp.num = 1;
-            tmp.den = c->sample_rate;
-            frame->pts = VICE_P_AV_RESCALE_Q(audio_st.samples_count, tmp, c->time_base);
-#else
             frame->pts = VICE_P_AV_RESCALE_Q(audio_st.samples_count, (AVRational){ 1, c->sample_rate }, c->time_base);
-#endif
             audio_st.samples_count += dst_nb_samples;
         }
 
@@ -750,10 +738,10 @@ static void ffmpegdrv_init_video(screenshot_t *screenshot)
     video_width = c->width = screenshot->width & ~0xf;
     video_height = c->height = screenshot->height & ~0xf;
     /* frames per second */
-    st->time_base = VICE_P_AV_D2Q(machine_get_cycles_per_frame() 
-                                    / (double)(video_halve_framerate ? 
+    st->time_base = VICE_P_AV_D2Q(machine_get_cycles_per_frame()
+                                    / (double)(video_halve_framerate ?
                                         machine_get_cycles_per_second() / 2 :
-                                        machine_get_cycles_per_second()), 
+                                        machine_get_cycles_per_second()),
                                   (1 << 16) - 1);
     c->time_base = st->time_base;
 
@@ -967,11 +955,7 @@ static int ffmpegdrv_record(screenshot_t *screenshot)
 
         if (sws_ctx != NULL) {
             VICE_P_SWS_SCALE(sws_ctx,
-#if defined(STATIC_FFMPEG) || defined(SHARED_FFMPEG)
-                (const uint8_t * const *)video_st.tmp_frame->data,
-#else
                 video_st.tmp_frame->data,
-#endif
                 video_st.tmp_frame->linesize, 0, c->height,
                 video_st.frame->data, video_st.frame->linesize);
         }
@@ -1059,18 +1043,20 @@ static void ffmpegdrv_shutdown(void)
 
     ffmpeglib_close(&ffmpeglib);
 
-    while (ffmpeg_drv.formatlist[i].name != NULL) {
-        lib_free(ffmpeg_drv.formatlist[i].name);
-        if (ffmpeg_drv.formatlist[i].audio_codecs != NULL) {
-            lib_free(ffmpeg_drv.formatlist[i].audio_codecs);
-        }
-        if (ffmpeg_drv.formatlist[i].video_codecs != NULL) {
-            lib_free(ffmpeg_drv.formatlist[i].video_codecs);
-        }
-        i++;
-    }
-    lib_free(ffmpeg_drv.formatlist);
+    if (ffmpeg_drv.formatlist != NULL) {
 
+        while (ffmpeg_drv.formatlist[i].name != NULL) {
+            lib_free(ffmpeg_drv.formatlist[i].name);
+            if (ffmpeg_drv.formatlist[i].audio_codecs != NULL) {
+                lib_free(ffmpeg_drv.formatlist[i].audio_codecs);
+            }
+            if (ffmpeg_drv.formatlist[i].video_codecs != NULL) {
+                lib_free(ffmpeg_drv.formatlist[i].video_codecs);
+            }
+            i++;
+        }
+        lib_free(ffmpeg_drv.formatlist);
+    }
     lib_free(ffmpeg_format);
 }
 
@@ -1113,7 +1099,7 @@ static void ffmpeg_get_formats_and_codecs(void)
                 video_codec_list[vi].name = NULL;
             }
             if (((audio_codec_list == NULL) || (ai > 0)) && ((video_codec_list == NULL) || (vi > 0))) {
-                ffmpegdrv_formatlist[f].name = lib_stralloc(formats_to_test[i].name);
+                ffmpegdrv_formatlist[f].name = lib_strdup(formats_to_test[i].name);
                 ffmpegdrv_formatlist[f].audio_codecs = audio_codec_list;
                 ffmpegdrv_formatlist[f++].video_codecs = video_codec_list;
                 ffmpegdrv_formatlist = lib_realloc(ffmpegdrv_formatlist, (f + 1) * sizeof(gfxoutputdrv_format_t));
@@ -1126,12 +1112,10 @@ static void ffmpeg_get_formats_and_codecs(void)
 
 void gfxoutput_init_ffmpeg(int help)
 {
-#ifndef STATIC_FFMPEG
     if (help) {
         gfxoutput_register(&ffmpeg_drv);
         return;
     }
-#endif
 
     if (ffmpeglib_open(&ffmpeglib) < 0) {
         return;
@@ -1140,4 +1124,8 @@ void gfxoutput_init_ffmpeg(int help)
     ffmpeg_get_formats_and_codecs();
     gfxoutput_register(&ffmpeg_drv);
 }
+
+/* re-enable ignored clang warnings */
+#pragma clang diagnostic pop
+
 #endif

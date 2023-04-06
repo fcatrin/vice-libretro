@@ -28,11 +28,12 @@
  *
  */
 
+/* #define DBGSDLMENU */
+
 #include "vice.h"
 
 #include "archdep.h"
 #include "interrupt.h"
-#include "ioutil.h"
 #include "joy.h"
 #include "kbd.h"
 #include "lib.h"
@@ -53,16 +54,19 @@
 #include "vsidui_sdl.h"
 #include "vsync.h"
 
-#ifdef ANDROID_COMPILE
-#include "loader.h"
-#endif
-
 #include "vice_sdl.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef DBGSDLMENU
+#define DBG(x) printf x
+#else
+#define DBG(x)
+#endif
+
 int sdl_menu_state = 0;
+int sdl_pause_state = 0;
 
 void (*sdl_ui_set_menu_params)(int index, menu_draw_t *menu_draw);
 
@@ -81,13 +85,14 @@ static uint16_t sdl_monitor_translation[256];
  * Used to properly clean up when 'Quit emu' is triggered
  */
 static uint8_t *draw_buffer_backup = NULL;
+static unsigned int draw_buffer_backup_width = 0;
+static unsigned int draw_buffer_backup_height = 0;
 
 /** \brief  Reference to menu offsets allocated in sdl_ui_menu_get_offsets()
  *
  * Used to properly clean up when 'Quit emu' is triggered
  */
 static int *menu_offsets = NULL;
-
 
 static menufont_t activefont = { NULL, sdl_active_translation, 0, 0 };
 static menufont_t menufont = { NULL, sdl_menu_translation, 0, 0 };
@@ -113,7 +118,7 @@ static const uint8_t sdl_char_to_screen[256] = {
 
     /* 20-7f ascii */
 
-    /* 20-2f  !"#$%&´()*+,-./ */
+    /* 20-2f  !"#$%&'()*+,-./ */
     0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
     /* 30-3f 0123456789:;<=>? */
     0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
@@ -143,33 +148,33 @@ static const uint8_t sdl_char_to_screen_uppercase[256] = {
     0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f,
     0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f,
 
-    /* 20-2f  !"#$%&´()*+,-./ */
-    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 
+    /* 20-2f  !"#$%&'()*+,-./ */
+    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
     /* 30-3f 0123456789:;<=>? */
-    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 
+    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
     /* 40-4f @ABCDEFGHIJKLMNO */
-    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
     /* 50-5f PQRSTUVWXYZ[\]^_ */
-    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
     /* 60-6f @ABCDEFGHIJKLMNO (shifted)*/
-    0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 
+    0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f,
     /* 70-7f PQRSTUVWXYZ[\]^_ (shifted) */
     0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f,
 
     /* 80-9f non printable */
-    0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf, 
-    0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf, 
+    0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf,
+    0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf,
 
     /* a0-bf gfx chars */
-    0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 
-    0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f, 
+    0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f,
+    0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f,
 
     /* c0-cf @ABCDEFGHIJKLMNO (shifted) alternatives */
-    0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 
+    0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f,
     /* d0-df PQRSTUVWXYZ[\]^_ (shifted) alternatives */
     0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f,
 
-    0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 
+    0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f,
     0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x5e
 };
 
@@ -179,33 +184,33 @@ static const uint8_t sdl_char_to_screen_monitor[256] = {
     0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f,
     0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f,
 
-    /* 20-2f  !"#$%&´()*+,-./ */
-    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 
+    /* 20-2f  !"#$%&'()*+,-./ */
+    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
     /* 30-3f 0123456789:;<=>? */
-    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 
+    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
     /* 40-4f @ABCDEFGHIJKLMNO */
-    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
     /* 50-5f PQRSTUVWXYZ[\]^_ */
-    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
     /* 60-6f @ABCDEFGHIJKLMNO (shifted)*/
-    0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 
+    0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f,
     /* 70-7f PQRSTUVWXYZ[\]^_ (shifted) */
     0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f,
 
     /* 80-9f non printable */
-    0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf, 
-    0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf, 
+    0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf,
+    0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf,
 
     /* a0-bf gfx chars */
-    0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 
-    0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f, 
+    0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f,
+    0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f,
 
     /* c0-cf @ABCDEFGHIJKLMNO (shifted) alternatives */
-    0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 
+    0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f,
     /* d0-df PQRSTUVWXYZ[\]^_ (shifted) alternatives */
     0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f,
 
-    0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 
+    0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f,
     0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f
 };
 
@@ -296,7 +301,7 @@ static int *sdl_ui_menu_get_offsets(ui_menu_entry_t *menu, int num_items)
                 j = i;
 
                 while ((j < num_items) && (menu[j].type == block_type)) {
-                    len = strlen(menu[j].string);
+                    len = (int)strlen(menu[j].string);
                     menu_offsets[j] = len;
                     if (len > max_len) {
                         max_len = len;
@@ -352,6 +357,13 @@ int sdl_ui_set_toggle_colors(int state)
 {
     uint8_t color = menu_draw.color_front;
     menu_draw.color_front = (state == 1) ? menu_draw.color_active_grey : menu_draw.color_inactive_grey;
+    return color;
+}
+
+static int sdl_ui_set_item_colors(int status)
+{
+    uint8_t color = menu_draw.color_front;
+    menu_draw.color_front = (status == MENU_STATUS_INACTIVE) ? menu_draw.color_inactive_grey : menu_draw.color_default_front;
     return color;
 }
 
@@ -416,12 +428,14 @@ static int sdl_ui_display_item(ui_menu_entry_t *item, int y_pos, int value_offse
     }
     i += n;
 
+    /* setup color for the menu item */
     if (!iscursor) {
         sdl_ui_reset_tickmark_colors(oldfg);
-    }
-
-    if (!iscursor && istoggle) {
-        sdl_ui_set_toggle_colors(status);
+        if (istoggle) {
+            sdl_ui_set_toggle_colors(status);
+        } else {
+            sdl_ui_set_item_colors(item->status);
+        }
     }
 
     /* print the actual menu item */
@@ -498,6 +512,7 @@ static void sdl_ui_menu_redraw_cursor(ui_menu_entry_t *menu, int offset, int *va
 
 static ui_menu_retval_t sdl_ui_menu_display(ui_menu_entry_t *menu, const char *title, int allow_mapping)
 {
+    static int last_cur = -1, last_cur_offset = -1;
     int num_items = 0, cur = 0, cur_old = -1, cur_offset = 0, in_menu = 1, redraw = 1;
     int *value_offsets = NULL;
     ui_menu_retval_t menu_retval = MENU_RETVAL_DEFAULT;
@@ -521,6 +536,13 @@ static ui_menu_retval_t sdl_ui_menu_display(ui_menu_entry_t *menu, const char *t
     /* If a subtitle is at the top of the menu, then start at the next line. */
     if (menu[0].type == MENU_ENTRY_TEXT) {
         cur = 1;
+    }
+    /* restore last position in main menu */
+    if (menu == main_menu) {
+        if ((last_cur >= 0) && (last_cur_offset >= 0)) {
+            cur = last_cur;
+            cur_offset = last_cur_offset;
+        }
     }
 
     while (in_menu) {
@@ -656,12 +678,21 @@ static ui_menu_retval_t sdl_ui_menu_display(ui_menu_entry_t *menu, const char *t
 
     lib_free(value_offsets);
     menu_offsets = NULL;
+    /* remember position in main menu for next time we enter it */
+    if (menu == main_menu) {
+        last_cur = cur;
+        last_cur_offset = cur_offset;
+    }
     return menu_retval;
 }
 
 static ui_menu_retval_t sdl_ui_menu_item_activate(ui_menu_entry_t *item)
 {
     const char *p = NULL;
+
+    if (item->status == MENU_STATUS_INACTIVE) {
+        return MENU_RETVAL_DEFAULT;
+    }
 
     switch (item->type) {
         case MENU_ENTRY_OTHER:
@@ -688,27 +719,63 @@ static ui_menu_retval_t sdl_ui_menu_item_activate(ui_menu_entry_t *item)
     return MENU_RETVAL_DEFAULT;
 }
 
+/* make a backup of the current emulator screen contents */
+void sdl_ui_create_draw_buffer_backup(void)
+{
+    unsigned int width = sdl_active_canvas->draw_buffer->draw_buffer_width;
+    unsigned int height = sdl_active_canvas->draw_buffer->draw_buffer_height;
+
+    draw_buffer_backup = lib_malloc(width * height);
+    memcpy(draw_buffer_backup, sdl_active_canvas->draw_buffer->draw_buffer, width * height);
+    draw_buffer_backup_width = width;
+    draw_buffer_backup_height = height;
+}
+
+/* copy the backup of the emulator output back to the canvas */
+void sdl_ui_restore_draw_buffer_backup(void)
+{
+    unsigned int width = sdl_active_canvas->draw_buffer->draw_buffer_width;
+    unsigned int height = sdl_active_canvas->draw_buffer->draw_buffer_height;
+
+    if (draw_buffer_backup && draw_buffer_backup_width == width && draw_buffer_backup_height == height) {
+        memcpy(sdl_active_canvas->draw_buffer->draw_buffer, draw_buffer_backup, width * height);
+    }
+}
+
+/* free the backup buffer */
+void sdl_ui_destroy_draw_buffer_backup(void)
+{
+    if (draw_buffer_backup) {
+        lib_free(draw_buffer_backup);
+        draw_buffer_backup = NULL;
+    }
+}
+
 static void sdl_ui_trap(uint16_t addr, void *data)
 {
     unsigned int width;
     unsigned int height;
     static char msg[0x40];
 
+    DBG(("sdl_ui_trap start\n"));
+
     width = sdl_active_canvas->draw_buffer->draw_buffer_width;
     height = sdl_active_canvas->draw_buffer->draw_buffer_height;
-    draw_buffer_backup = lib_malloc(width * height);
 
-    memcpy(draw_buffer_backup, sdl_active_canvas->draw_buffer->draw_buffer, width * height);
+    sdl_ui_create_draw_buffer_backup();
 
     sdl_ui_activate_pre_action();
+
     if (machine_class != VICE_MACHINE_VSID) {
         memset(sdl_active_canvas->draw_buffer->draw_buffer, 0, width * height);
     }
 
     if (data == NULL) {
+        /* called via "menu key" to open the menu */
         sprintf(&msg[0], "VICE %s - main menu", machine_name);
         sdl_ui_menu_display(main_menu, msg, 1);
     } else {
+        /* called via hotkey */
         sdl_ui_init_draw_params();
         sdl_ui_menu_item_activate((ui_menu_entry_t *)data);
     }
@@ -716,17 +783,25 @@ static void sdl_ui_trap(uint16_t addr, void *data)
     if (machine_class == VICE_MACHINE_VSID) {
         memset(sdl_active_canvas->draw_buffer_vsid->draw_buffer, 0, width * height);
         sdl_ui_refresh();
-    } else {
-        if (ui_emulation_is_paused() && (width == sdl_active_canvas->draw_buffer->draw_buffer_width) && (height == sdl_active_canvas->draw_buffer->draw_buffer_height)) {
+    }
+#if 0
+/* this should be no more needed */
+    else {
+        if (ui_pause_active() && draw_buffer_backup &&
+            (width == sdl_active_canvas->draw_buffer->draw_buffer_width) &&
+            (height == sdl_active_canvas->draw_buffer->draw_buffer_height)) {
             memcpy(sdl_active_canvas->draw_buffer->draw_buffer, draw_buffer_backup, width * height);
             sdl_ui_refresh();
         }
     }
-
+#endif
     sdl_ui_activate_post_action();
 
-    lib_free(draw_buffer_backup);
-    draw_buffer_backup = NULL;
+    sdl_ui_destroy_draw_buffer_backup();
+
+    sdljoy_clear_presses();
+
+    DBG(("sdl_ui_trap end\n"));
 }
 
 /* ------------------------------------------------------------------ */
@@ -875,84 +950,28 @@ static int sdl_ui_readline_input(SDLKey *key, SDLMod *mod, Uint16 *c_uni)
     SDL_Event e;
     int got_key = 0;
     ui_menu_action_t action = MENU_ACTION_NONE;
-#ifdef USE_SDLUI2
+    int joynum;
+#ifdef USE_SDL2UI
     int i;
 #endif
 
     *mod = KMOD_NONE;
     *c_uni = 0;
 
-#ifdef USE_SDLUI2
+#ifdef USE_SDL2UI
     SDL_StartTextInput();
 #endif
 
     do {
-#ifdef ANDROID_COMPILE
-        struct locnet_al_event event1;
-        struct locnet_al_event *event = &event1;
-        ui_menu_action_t action2;
-#endif
         action = MENU_ACTION_NONE;
 
-#ifdef ANDROID_COMPILE
-        while (!Android_PollEvent(&event1)) {
-            SDL_Delay(20);
-        }
-        switch (event->eventType) {
-            case SDL_JOYAXISMOTION:
-                {
-                    action = sdljoy_axis_event(0, 0, event->x / 256.0f * 32767);
-                    action2 = sdljoy_axis_event(0, 1, event->y / 256.0f * 32767);
-                    if (action == MENU_ACTION_NONE) {
-                        action = action2;
-                    }
-                }
-                break;
-            case SDL_JOYBUTTONDOWN:
-                {
-                    action = sdljoy_button_event(0, event->keycode, 1);
-                }
-                break;
-            case SDL_JOYBUTTONUP:
-                {
-                    action = sdljoy_button_event(0, event->keycode, 0);
-                }
-                break;
-            case SDL_KEYDOWN:
-                {
-                    unsigned long modifier = event->modifier;
-                    int ctrl = ((modifier & KEYBOARD_CTRL_FLAG) != 0);
-                    int alt = ((modifier & KEYBOARD_ALT_FLAG) != 0);
-                    int shift = ((modifier & KEYBOARD_SHIFT_FLAG) != 0);
-                    unsigned long kcode = (unsigned long)event->keycode;
-
-                    int kmod = 0;
-
-                    if (ctrl) {
-                        kmod |= KMOD_LCTRL;
-                    }
-                    if (alt) {
-                        kmod |= KMOD_LALT;
-                    }
-                    if (shift) {
-                        kmod |= KMOD_LSHIFT;
-                    }
-
-                    *key = kcode;
-                    *mod = kmod;
-                    *c_uni = event->unicode;
-                    got_key = 1;
-                }
-                break;
-        }
-#else
         SDL_WaitEvent(&e);
 
         switch (e.type) {
             case SDL_KEYDOWN:
                 *key = SDL2x_to_SDL1x_Keys(e.key.keysym.sym);
                 *mod = e.key.keysym.mod;
-#ifdef USE_SDLUI2
+#ifdef USE_SDL2UI
                 /* For SDL2x only get 'special' keys from keydown event. */
                 for (i = 0; keytable_pc_special[i] != -1; ++i) {
                     SDLKey special = SDL2x_to_SDL1x_Keys(e.key.keysym.sym);
@@ -967,7 +986,7 @@ static int sdl_ui_readline_input(SDLKey *key, SDLMod *mod, Uint16 *c_uni)
 #endif
                 break;
 
-#ifdef USE_SDLUI2
+#ifdef USE_SDL2UI
             case SDL_TEXTINPUT:
                 if (e.text.text[0] != 0) {
                     *key = e.text.text[0];
@@ -981,20 +1000,28 @@ static int sdl_ui_readline_input(SDLKey *key, SDLMod *mod, Uint16 *c_uni)
 
 #ifdef HAVE_SDL_NUMJOYSTICKS
             case SDL_JOYAXISMOTION:
-                action = sdljoy_axis_event(e.jaxis.which, e.jaxis.axis, e.jaxis.value);
+                joynum = sdljoy_get_joynum_for_event(e.jaxis.which);
+                if (joynum != -1) {
+                    action = sdljoy_axis_event(joynum, e.jaxis.axis, e.jaxis.value);
+                }
                 break;
             case SDL_JOYBUTTONDOWN:
-                action = sdljoy_button_event(e.jbutton.which, e.jbutton.button, 1);
+                joynum = sdljoy_get_joynum_for_event(e.jbutton.which);
+                if (joynum != -1) {
+                    action = sdljoy_button_event(joynum, e.jbutton.button, 1);
+                }
                 break;
             case SDL_JOYHATMOTION:
-                action = sdljoy_hat_event(e.jhat.which, e.jhat.hat, e.jhat.value);
+                joynum = sdljoy_get_joynum_for_event(e.jhat.which);
+                if (joynum != -1) {
+                    action = sdljoy_hat_event(joynum, e.jhat.hat, e.jhat.value);
+                }
                 break;
 #endif
             default:
                 ui_handle_misc_sdl_event(e);
                 break;
         }
-#endif
 
         switch (action) {
             case MENU_ACTION_LEFT:
@@ -1022,7 +1049,7 @@ static int sdl_ui_readline_input(SDLKey *key, SDLMod *mod, Uint16 *c_uni)
 
     } while (!got_key);
 
-#ifdef USE_SDLUI2
+#ifdef USE_SDL2UI
     SDL_StopTextInput();
 #endif
 
@@ -1147,7 +1174,7 @@ static int sdl_ui_slider(const char* title, const int cur, const int min, const 
 
                 /* accept value from user, convert and free */
                 if (value) {
-                    i = strtol(value, NULL, 0);
+                    i = (int)strtol(value, NULL, 0);
 
                     if (i < min) {
                         i = min;
@@ -1202,8 +1229,10 @@ menufont_t *sdl_ui_get_menu_font(void)
     return &activefont;
 }
 
+/* called before the UI runs by sdl_ui_trap, sdl_vkbd_key_map, uimon_window_open */
 void sdl_ui_activate_pre_action(void)
 {
+    DBG(("sdl_ui_activate_pre_action start\n"));
 #ifdef HAVE_FFMPEG
     if (screenshot_is_recording()) {
         screenshot_stop_recording();
@@ -1221,26 +1250,27 @@ void sdl_ui_activate_pre_action(void)
         sdl_vsid_close();
     }
 
-#ifndef USE_SDLUI2
+#ifndef USE_SDL2UI
     SDL_EnableKeyRepeat(SDL_DEFAULT_REPEAT_DELAY, SDL_DEFAULT_REPEAT_INTERVAL);
 #endif
     sdl_menu_state = 1;
     ui_check_mouse_cursor();
+    DBG(("sdl_ui_activate_pre_action end\n"));
 }
 
+/* called when UI closes and emulator resumes by sdl_ui_trap, sdl_vkbd_key_map, uimon_window_close */
 void sdl_ui_activate_post_action(void)
 {
-    int warp_state;
+    DBG(("sdl_ui_activate_post_action start\n"));
 
     sdl_menu_state = 0;
     ui_check_mouse_cursor();
-#ifndef USE_SDLUI2
+#ifndef USE_SDL2UI
     SDL_EnableKeyRepeat(0, 0);
 #endif
 
     /* Do not resume sound if in warp mode */
-    resources_get_int("WarpMode", &warp_state);
-    if (warp_state == 0) {
+    if (!vsync_get_warp_mode()) {
         sound_resume();
     }
 
@@ -1248,11 +1278,22 @@ void sdl_ui_activate_post_action(void)
         sdl_vsid_activate();
     }
 
+    sdl_ui_restore_draw_buffer_backup();
+
     /* Force a video refresh */
+    video_canvas_refresh_all(sdl_active_canvas);
     /* SDL mode: prevent core dump - pressing menu key in -console mode causes parent_raster to be NULL */
     if (sdl_active_canvas->parent_raster) {
         raster_force_repaint(sdl_active_canvas->parent_raster);
     }
+
+    /* if the emulator was paused before, enter pause state */
+    if (sdl_pause_state) {
+        sdl_pause_state = 0;
+        ui_pause_enable();
+    }
+
+    DBG(("sdl_ui_activate_post_action end\n"));
 }
 
 void sdl_ui_init_draw_params(void)
@@ -1336,7 +1377,7 @@ int sdl_ui_print_center(const char *text, int pos_y)
         return 0;
     }
 
-    len = strlen(text);
+    len = (int)strlen(text);
 
     if (len == 0) {
         return 0;
@@ -1402,8 +1443,9 @@ void sdl_ui_invert_char(int pos_x, int pos_y)
 
 void sdl_ui_activate(void)
 {
-    if (ui_emulation_is_paused()) {
-        ui_pause_emulation(0);
+    sdl_pause_state = ui_pause_active();
+    if (sdl_pause_state) {
+        ui_pause_disable();
     }
     interrupt_maincpu_trigger_trap(sdl_ui_trap, NULL);
 }
@@ -1463,12 +1505,12 @@ char* sdl_ui_readline(const char* previous, int pos_x, int pos_y)
     pc_vkbd_state = archdep_require_vkbd();
 
     if (previous) {
-        new_string = lib_stralloc(previous);
+        new_string = lib_strdup(previous);
         size = strlen(new_string) + 1;
         if (size < max) {
             new_string = lib_realloc(new_string, max);
         } else {
-            ui_error("Readline: previous %i >= max %i, returning NULL.", size, max);
+            ui_error("Readline: previous %" PRI_SIZE_T " >= max %" PRI_SIZE_T ", returning NULL.", size, max);
             lib_free(new_string);
             return NULL;
         }
@@ -1490,7 +1532,7 @@ char* sdl_ui_readline(const char* previous, int pos_x, int pos_y)
     /* draw previous string (if any), initialize size and cursor position */
     size = i = sdl_ui_print_wrap(new_string, pos_x, &pos_y);
 
-#ifndef USE_SDLUI2
+#ifndef USE_SDL2UI
     SDL_EnableUNICODE(1);
 #endif
 
@@ -1549,7 +1591,7 @@ char* sdl_ui_readline(const char* previous, int pos_x, int pos_y)
                 i = 0;
                 break;
             case VICE_SDLK_END:
-                i = size;
+                i = (int)size;
                 break;
             case PC_VKBD_ACTIVATE:
                 pc_vkbd_state ^= 1;
@@ -1607,7 +1649,7 @@ char* sdl_ui_readline(const char* previous, int pos_x, int pos_y)
         }
     } while (!done);
 
-#ifndef USE_SDLUI2
+#ifndef USE_SDL2UI
     SDL_EnableUNICODE(0);
 #endif
 
@@ -1668,7 +1710,7 @@ void sdl_ui_scroll_screen_up(void)
     }
 }
 
-/* handler for the sliders used in the colour- and CRT emulation settings 
+/* handler for the sliders used in the colour- and CRT emulation settings
    a custom handler is needed so we can print the colour matrix on the screen
    with the slider, and to call sdl_ui_slider to enable realtime updates of the
    respective resources.
@@ -1723,7 +1765,7 @@ void sdl_ui_set_active_font(ui_menu_active_font_t f)
 {
     int i;
     menufont_t *font;
-    
+
     switch (f) {
         case MENU_FONT_IMAGES:
             font = &imagefont;
@@ -1736,7 +1778,7 @@ void sdl_ui_set_active_font(ui_menu_active_font_t f)
             font = &menufont;
             break;
     }
- 
+
     activefont.font = font->font;
     activefont.w = font->w;
     activefont.h = font->h;
@@ -1792,9 +1834,8 @@ void sdl_ui_set_monitor_font(uint8_t *font, int w, int h)
  */
 void sdl_ui_menu_shutdown(void)
 {
-    if (draw_buffer_backup != NULL) {
-        lib_free(draw_buffer_backup);
-    }
+    sdl_ui_destroy_draw_buffer_backup();
+
     if (menu_offsets != NULL) {
         lib_free(menu_offsets);
     }

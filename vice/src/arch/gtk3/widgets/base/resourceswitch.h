@@ -32,14 +32,13 @@
 #include <gtk/gtk.h>
 
 GtkWidget * vice_gtk3_resource_switch_new(const char *resource);
-GtkWidget * vice_gtk3_resource_switch_new_sprintf(const char *fmt, ...);
+GtkWidget * vice_gtk3_resource_switch_new_sprintf(const char *fmt, ...) VICE_ATTR_PRINTF;
 
 gboolean    vice_gtk3_resource_switch_set(GtkWidget *widget, gboolean value);
 gboolean    vice_gtk3_resource_switch_get(GtkWidget *widget, gboolean *value);
 gboolean    vice_gtk3_resource_switch_reset(GtkWidget *widget);
 gboolean    vice_gtk3_resource_switch_factory(GtkWidget *widget);
 gboolean    vice_gtk3_resource_switch_sync(GtkWidget *widget);
-gboolean    vice_gtk3_resource_switch_apply(GtkWidget *widget);
 
 
 #endif

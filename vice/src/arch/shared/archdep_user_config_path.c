@@ -12,7 +12,6 @@
  *  - BeOS/Haiku (untested)
  *  - AmigaOS (untested)
  *  - OS/2 (untested)
- *  - MS-DOS (untested)
  *
  */
 
@@ -40,16 +39,25 @@
 #include "vice.h"
 #include "archdep_defs.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <stddef.h>
+#ifdef WINDOWS_COMPILE
+# include <windows.h>
+# include <shlobj.h>
+#endif
 
-#include "lib.h"
-#include "log.h"
-#include "archdep_boot_path.h"
-#include "archdep_home_path.h"
-#include "archdep_join_paths.h"
+/* TODO: Haiku is a lot more POSIX-like than classic BeOS, so perhaps we should
+ *       test for classic BeOS or Haiku and act accordingly.
+ */
+#if !defined(UNIX_COMPILE) && !defined(WINDOWS_COMPILE) \
+    && !(defined(BEOS_COMPILE))
+# include "archdep_boot_path.h"
+#endif
+#ifdef BEOS_COMPILE
+# include "archdep_home_path.h"
+#endif
 #include "archdep_xdg.h"
+#include "lib.h"
+#include "util.h"
 
 #include "archdep_user_config_path.h"
 
@@ -78,25 +86,34 @@ static char *user_config_dir = NULL;
  *
  * \return  path to VICE config directory
  */
-char *archdep_user_config_path(void)
+const char *archdep_user_config_path(void)
 {
+#ifdef WINDOWS_COMPILE
+    TCHAR szPath[MAX_PATH];
+#endif
+    /* don't recalculate path if it's already known */
     if (user_config_dir != NULL) {
         return user_config_dir;
     }
 
-#if defined(ARCHDEP_OS_UNIX)
+#if defined(UNIX_COMPILE) || defined(HAIKU_COMPILE)
     char *xdg_config = archdep_xdg_config_home();
-    user_config_dir = archdep_join_paths(xdg_config, "vice", NULL);
+    user_config_dir = util_join_paths(xdg_config, "vice", NULL);
     lib_free(xdg_config);
 
-#elif defined(ARCHDEP_OS_WINDOWS)
-    user_config_dir = archdep_join_paths(archdep_home_path(),
-                                         "AppData", "Roaming", "vice", NULL);
-#elif defined(ARCHDEP_OS_BEOS)
-    user_config_dir = archdep_join_paths(archdep_home_path(),
-                                         "config", "settings", "vice", NULL);
+#elif defined(WINDOWS_COMPILE)
+    /*
+     * Use WinAPI to get %APPDATA% directory, hopefully more reliable than
+     * hardcoding 'AppData/Roaming'. We can't use SHGetKnownFolderPath() here
+     * since SDL should be able to run on Windows XP and perhaps even lower.
+     */
+    if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, szPath))) {
+        user_config_dir = util_join_paths(szPath, "vice", NULL);
+    } else {
+        user_config_dir = NULL;
+    }
 #else
-    user_config_dir = lib_stralloc(archdep_boot_path());
+    user_config_dir = lib_strdup(archdep_boot_path());
 #endif
     return user_config_dir;
 }

@@ -33,46 +33,12 @@
 #include "resources.h"
 #include "lib.h"
 #include "debug_gtk3.h"
+#include "basedialogs.h"
 #include "cartridge.h"
 
 #include "carthelpers.h"
 
-
-int (*carthelpers_save_func)(int type, const char *filename);
-int (*carthelpers_flush_func)(int type);
-int (*carthelpers_is_enabled_func)(int type);
-int (*carthelpers_enable_func)(int type);
-int (*carthelpers_disable_func)(int type);
-
-
-/** \brief  Placeholder function for functions accepting (int)
- *
- * Makes sure calling for example, carthelpers_flush_func() doesn't dereference
- * a NULL pointer when that was passed into carthelpers_set_functions()
- *
- * \return  -1
- */
-static int null_handler(int type)
-{
-    debug_gtk3("warning: not implemented (NULL).");
-    return -1;
-}
-
-
-/** \brief  Placeholder function for functions accepting (int, const char *)
- *
- * Makes sure calling for example, carthelpers_save_func() doesn't dereference
- * a NULL pointer when that was passed into carthelpers_set_functions()
- *
- * \return  -1
- */
-static int null_handler_save(int type, const char *filename)
-{
-    debug_gtk3("warning: not implemented (NULL).");
-    return -1;
-}
-
-
+#if 0
 /** \brief  Set cartridge helper functions
  *
  * This function helps to avoid the problems with VSID wrt cartridge code:
@@ -82,43 +48,59 @@ static int null_handler_save(int type, const char *filename)
  * Passing in pointers to the cart functions in ${emu}ui.c (except vsidui.c)
  * 'solves' this problem.
  *
- * Normally \a save_func should be cartridge_save_image(), \a fush_func should
+ * Normally \a save_func should be cartridge_save_image(), \a flush_func should
  * be cartridge_flush_image() and \a enabled_func should be
  * \a cartridge_type_enabled.
  * These are the functions used by many/all(?) cartridge widgets
  *
- * \param[in]   save_func       cartridge image save-as function
- * \param[in]   flush_func      cartridge image flush/save function
- * \param[in]   is_enabled_func cartridge enabled state function
- * \param[in]   enable_func     cartridge enable function
- * \param[in]   disable_func    cartridge disable function
+ * \param[in]   save_func           cart image save-as function
+ * \param[in]   flush_func          cart image flush/save function
+ * \param[in]   is_enabled_func     cart enabled state function
+ * \param[in]   enable_func         cart enable function
+ * \param[in]   disable_func        cart disable function
+ * \param[in]   can_save_func       cart-can-save function
+ * \param[in]   can_flush_func      cart-can-flush function
+ * \param[in]   set_default_func    set default cart function
+ * \param[in]   unset_default_func  unset default cart function
+ * \param[in]   info_list_func      function to retrieve list of cart info
  */
 void carthelpers_set_functions(
         int (*save_func)(int, const char *),
         int (*flush_func)(int),
         int (*is_enabled_func)(int),
         int (*enable_func)(int),
-        int (*disable_func)(int))
+        int (*disable_func)(int),
+        int (*can_save_func)(int),
+        int (*can_flush_func)(int),
+        void (*set_default_func)(void),
+        void (*unset_default_func)(void),
+        cartridge_info_t * (*info_list_func)(void))
 {
-    carthelpers_save_func = save_func ? save_func : null_handler_save;
-    carthelpers_flush_func = flush_func ? flush_func : null_handler;
-    carthelpers_is_enabled_func = is_enabled_func ? is_enabled_func : null_handler;
-    carthelpers_enable_func = enable_func ? enable_func : null_handler;
-    carthelpers_disable_func = disable_func ? disable_func : null_handler;
+    carthelpers_save_func = save_func;
+    carthelpers_flush_func = flush_func;
+    carthelpers_is_enabled_func = is_enabled_func;
+    carthelpers_enable_func = enable_func;
+    carthelpers_disable_func = disable_func;
+    carthelpers_can_save_func = can_save_func;
+    carthelpers_can_flush_func = can_flush_func;
+    carthelpers_set_default_func = set_default_func;
+    carthelpers_unset_default_func = unset_default_func;
+    carthelpers_info_list_func = info_list_func;
 }
-
+#endif
 
 /** \brief  Handler for the "destroy" event of a cart enable check button
  *
  * Frees the cartridge name stored as a property in the check button.
  *
- * \param[in]   check   check button
- * \param[in]   data    unused
+ * \param[in,out]   check   check button
+ * \param[in]       data    unused
  */
 static void on_cart_enable_check_button_destroy(GtkCheckButton *check,
                                                 gpointer data)
 {
     char *name = g_object_get_data(G_OBJECT(check), "CartridgeName");
+
     if (name != NULL) {
         lib_free(name);
     }
@@ -140,29 +122,20 @@ static void on_cart_enable_check_button_toggled(GtkCheckButton *check,
 {
     int id;
     int state;
-#ifdef HAVE_DEBUG_GTK3UI
-    const char *name;
-    name = (const char *)g_object_get_data(G_OBJECT(check), "CartridgeName");
-#endif
 
     id = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(check), "CartridgeId"));
     state = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(check));
-
-    debug_gtk3("setting to %s '%s' (%d).", state ? "enable" : "disable",
-            name, id);
-
     if (state) {
-        if (carthelpers_enable_func(id) < 0) {
-            debug_gtk3("failed to enable %s cartridge.", name);
+        if (cartridge_enable(id) < 0) {
             gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(check), FALSE);
         }
     } else {
-        if (carthelpers_disable_func(id) < 0) {
-            debug_gtk3("failed to disable %s cartridge.", name);
+        if (cartridge_disable(id) < 0) {
             gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(check), TRUE);
         }
     }
 }
+
 
 /** \brief  Create a check button to enable/disable a cartridge
  *
@@ -186,20 +159,19 @@ GtkWidget *carthelpers_create_enable_check_button(const char *cart_name,
                                                   int cart_id)
 {
     GtkWidget *check;
-    char *title;
-    gchar *name;
+    char title[256];
+    char *name;
 
-    title = lib_msprintf("Enable %s cartridge", cart_name);
+    g_snprintf(title, sizeof(title), "Enable %s cartridge", cart_name);
     check = gtk_check_button_new_with_label(title);
-    lib_free(title);    /* Gtk3 makes a copy of the title */
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(check),
-            carthelpers_is_enabled_func(cart_id));
+                                 (gboolean)cartridge_type_enabled(cart_id));
 
-    name = lib_stralloc(cart_name);
+    name = lib_strdup(cart_name);
     g_object_set_data(G_OBJECT(check), "CartridgeName", (gpointer)name);
     g_object_set_data(G_OBJECT(check), "CartridgeId", GINT_TO_POINTER(cart_id));
 
-    g_signal_connect(check, "destroy",
+    g_signal_connect_unlocked(check, "destroy",
             G_CALLBACK(on_cart_enable_check_button_destroy), NULL);
     g_signal_connect(check, "toggled",
             G_CALLBACK(on_cart_enable_check_button_toggled), NULL);

@@ -11,9 +11,11 @@ include $(CORE_DIR)/Makefile.common
 
 COREFLAGS := -DCORE_NAME=\"$(EMUTYPE)\" \
   -D__LIBRETRO__ \
+  -DUSE_LIBRETRO_VFS \
+  -DANDROID \
   $(INCFLAGS) $(COMMONFLAGS) \
   -DHAVE_INET_ATON \
-  -DWANT_ZLIB \
+  -DHAVE_7ZIP -D_7ZIP_ST \
   -D_INTTYPES_H
 
 GIT_VERSION := " $(shell git rev-parse --short HEAD || echo unknown)"

@@ -41,6 +41,7 @@
 #include "types.h"
 #include "util.h"
 #include "lib.h"
+#include "log.h"
 
 /*
     the default cartridge works like this:
@@ -106,11 +107,11 @@ int roml_bank = 0, romh_bank = 0, export_ram = 0;
 /* ---------------------------------------------------------------------*/
 
 static const export_resource_t export_res_8kb = {
-    "Generic 8KB", 1, 0, NULL, NULL, CARTRIDGE_GENERIC_8KB
+    "Generic 8KiB", 1, 0, NULL, NULL, CARTRIDGE_GENERIC_8KB
 };
 
 static const export_resource_t export_res_16kb = {
-    "Generic 16KB", 1, 1, NULL, NULL, CARTRIDGE_GENERIC_16KB
+    "Generic 16KiB", 1, 1, NULL, NULL, CARTRIDGE_GENERIC_16KB
 };
 
 static export_resource_t export_res_ultimax = {
@@ -193,13 +194,13 @@ static int generic_common_attach(int mode)
 {
     switch (mode) {
         case CARTRIDGE_GENERIC_8KB:
-            DBG(("generic: attach 8kb\n"));
+            DBG(("generic: attach 8KiB\n"));
             if (export_add(&export_res_8kb) < 0) {
                 return -1;
             }
             break;
         case CARTRIDGE_GENERIC_16KB:
-            DBG(("generic: attach 16kb\n"));
+            DBG(("generic: attach 16KiB\n"));
             if (export_add(&export_res_16kb) < 0) {
                 return -1;
             }
@@ -209,6 +210,9 @@ static int generic_common_attach(int mode)
             if (export_add(&export_res_ultimax) < 0) {
                 return -1;
             }
+            break;
+        default:
+            log_error(LOG_DEFAULT, "generic_common_attach: unknown mode %d", mode);
             break;
     }
     return 0;
@@ -262,6 +266,7 @@ int generic_crt_attach(FILE *fd, uint8_t *rawcart)
     int crttype;
 
     export_res_ultimax.game = 0;
+    DBG(("generic_crt_attach\n"));
 
     if (crt_read_chip_header(&chip, fd)) {
         return -1;
@@ -301,13 +306,13 @@ int generic_crt_attach(FILE *fd, uint8_t *rawcart)
 
 void generic_8kb_detach(void)
 {
-    DBG(("generic: detach 8kb\n"));
+    DBG(("generic: detach 8KiB\n"));
     export_remove(&export_res_8kb);
 }
 
 void generic_16kb_detach(void)
 {
-    DBG(("generic: detach 16kb\n"));
+    DBG(("generic: detach 16KiB\n"));
     export_remove(&export_res_16kb);
 }
 
@@ -430,7 +435,7 @@ int generic_snapshot_read_module(snapshot_t *s, int type)
     }
 
     /* Do not accept versions higher than current */
-    if (vmajor > SNAP_MAJOR || vminor > SNAP_MINOR) {
+    if (snapshot_version_is_bigger(vmajor, vminor, SNAP_MAJOR, SNAP_MINOR)) {
         snapshot_set_error(SNAPSHOT_MODULE_HIGHER_VERSION);
         goto fail;
     }

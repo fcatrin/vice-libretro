@@ -37,26 +37,10 @@
 #include "lib.h"
 #include "machine.h"
 #include "crtcontrolwidget.h"
-#include "resourcewidgetmanager.h"
 #include "uisettings.h"
 
 #include "settings_crt.h"
 
-
-/** \brief  Resource widget manager object
- */
-static resource_widget_manager_t manager;
-
-
-/** \brief  Clean up memory used by the widget manager
- *
- * \param[in]   widget  widget triggering the event (unused)
- * \param[in]   data    extra event data (unused)
- */
-static void on_destroy(GtkWidget *widget, gpointer data)
-{
-    vice_resource_widget_manager_exit(&manager);
-}
 
 
 /** \brief  Create a CRT settings widget for the settings UI
@@ -73,9 +57,6 @@ GtkWidget *settings_crt_widget_create(GtkWidget *parent)
     GtkWidget *grid;
     GtkWidget *chip1 = NULL;
     GtkWidget *chip2 = NULL;
-
-    vice_resource_widget_manager_init(&manager);
-    ui_settings_set_resource_widget_manager(&manager);
 
     grid = vice_gtk3_grid_new_spaced(VICE_GTK3_DEFAULT, VICE_GTK3_DEFAULT);
 
@@ -106,21 +87,28 @@ GtkWidget *settings_crt_widget_create(GtkWidget *parent)
             break;
     }
 
-    /* add VIC/VICII/TED/CRTC */
-    if (chip1 != NULL) {
+    if (machine_class == VICE_MACHINE_C128) {
+        /* pack the VICII and VDC sliders into a tabbed widget to space
+         * vertical space: */
+        GtkWidget *stack;
+        GtkWidget *switcher;
+
+        stack = gtk_stack_new();
+        gtk_stack_set_transition_type(GTK_STACK(stack),
+                                      GTK_STACK_TRANSITION_TYPE_NONE);
+        gtk_stack_add_titled(GTK_STACK(stack), chip1, "VICII", "VICIIe");
+        gtk_stack_add_titled(GTK_STACK(stack), chip2, "VDC", "VDC");
+
+        switcher = gtk_stack_switcher_new();
+        gtk_stack_switcher_set_stack(GTK_STACK_SWITCHER(switcher),
+                                     GTK_STACK(stack));
+
+        gtk_grid_attach(GTK_GRID(grid), switcher, 0, 0, 1, 1);
+        gtk_grid_attach(GTK_GRID(grid), stack, 0, 1, 1, 1);
+    } else {
+        /* add VIC/VICII/TED/CRTC */
         gtk_grid_attach(GTK_GRID(grid), chip1, 0, 0, 1, 1);
-        vice_resource_widget_manager_add_widget(&manager, chip1, NULL,
-                crt_control_widget_reset, NULL, NULL);
     }
-    /* add VDC in case of c128 */
-    if (chip2 != NULL) {
-        gtk_grid_attach(GTK_GRID(grid), chip2, 0, 1, 1, 1);
-        vice_resource_widget_manager_add_widget(&manager, chip2, NULL,
-                crt_control_widget_reset, NULL, NULL);
-    }
-
-    g_signal_connect(grid, "destroy", G_CALLBACK(on_destroy), NULL);
-
     gtk_widget_show_all(grid);
     return grid;
 }

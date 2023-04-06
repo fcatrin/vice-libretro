@@ -1,31 +1,25 @@
 # Makefile.am for the SDL version of `libarch.a'.
 
-if WIN32_COMPILE
-extra_includes = -I$(top_srcdir)/src/arch/mingw32-pcap/wpcap
-else
-extra_includes =
-endif
- 
-if DUMMY_COMPILE
-SUBDIRS = \
-	qnx4 \
-	sortix-files \
-	syllable-files
-endif
+sdldatadir = $(VICE_DATADIR)/common
 
 AM_CPPFLAGS = \
+	@VICE_CPPFLAGS@ \
 	@ARCH_INCLUDES@ \
+	-I$(top_srcdir)/src/arch/shared \
 	$(extra_includes) \
 	-I$(top_builddir)/src \
 	-I$(top_srcdir)/src/drive \
+	-I$(top_srcdir)/src/printerdrv \
 	-I$(top_srcdir)/src/c64 \
 	-I$(top_srcdir)/src/c64/cart \
 	-I$(top_srcdir)/src/c64dtv \
+	-I$(top_srcdir)/src/scpu64 \
 	-I$(top_srcdir)/src/c128 \
 	-I$(top_srcdir)/src/vic20 \
 	-I$(top_srcdir)/src/pet \
 	-I$(top_srcdir)/src/cbm2 \
 	-I$(top_srcdir)/src/plus4 \
+	-I$(top_srcdir)/src/plus4/cart \
 	-I$(top_srcdir)/src/raster \
 	-I$(top_srcdir)/src/rs232drv \
 	-I$(top_srcdir)/src/samplerdrv \
@@ -33,17 +27,27 @@ AM_CPPFLAGS = \
 	-I$(top_srcdir)/src/userport \
 	-I$(top_srcdir)/src/vdrive \
 	-I$(top_srcdir)/src/video \
+	-I$(top_srcdir)/src/lib/ \
 	-I$(top_srcdir)/src/lib/p64 \
 	-I$(top_srcdir)/src/platform \
 	-I$(top_srcdir)/src/joyport \
 	-I$(top_srcdir)/src/gfxoutputdrv \
 	-I$(top_srcdir)/src/tapeport \
 	-I$(top_srcdir)/src/imagecontents \
+	-I$(top_srcdir)/src/datasette \
+	-I$(top_srcdir)/src/core/rtc \
 	-I$(top_srcdir)/src
 
-noinst_LIBRARIES = libarch.a
+AM_CFLAGS = @VICE_CFLAGS@
 
-if SDL2_COMPILE
+AM_CXXFLAGS = @VICE_CXXFLAGS@
+
+AM_LDFLAGS = @VICE_LDFLAGS@
+
+
+noinst_LIBRARIES = libarch.a libtoolarch.a
+
+if USE_SDL2UI
 
 libarch_a_VERDEP_SOURCES = \
 	video_sdl2.c
@@ -58,12 +62,6 @@ endif
 libarch_a_SOURCES = \
 	archdep.c \
 	archdep.h \
-	blockdev.c \
-	console.c \
-	console_unix.c \
-	coproc.c \
-	coproc.h \
-	dynlib.c \
 	fullscreen.c \
 	fullscreenarch.h \
 	icon.c \
@@ -92,6 +90,8 @@ libarch_a_SOURCES = \
 	menu_cbm2cart.h \
 	menu_cbm2hw.c \
 	menu_cbm2hw.h \
+	menu_cbm5x0hw.c \
+	menu_cbm5x0hw.h \
 	menu_common.c \
 	menu_common.h \
 	menu_debug.c \
@@ -162,6 +162,8 @@ libarch_a_SOURCES = \
 	menu_speed.h \
 	menu_tape.c \
 	menu_tape.h \
+	menu_userport.c \
+	menu_userport.h \
 	menu_vic20cart.c \
 	menu_vic20cart.h \
 	menu_vic20hw.c \
@@ -170,17 +172,9 @@ libarch_a_SOURCES = \
 	menu_video.h \
 	mousedrv.c \
 	mousedrv.h \
-	rawnetarch.c \
-	rs232dev.c \
 	sdlmain.c \
-	signals.c \
 	ui.c \
 	ui.h \
-	uifontscbm2.c \
-	uifontscrtc.c \
-	uifontsted.c \
-	uifontsvic.c \
-	uifontsvicii.c \
 	uifonts.c \
 	uifonts.h \
 	uifilereq.c \
@@ -210,33 +204,31 @@ libarch_a_SOURCES = \
 	x64dtv_ui.c \
 	x64sc_ui.c \
 	xcbm2_ui.c \
+	xcbm5x0_ui.c \
 	xpet_ui.c \
 	xplus4_ui.c \
 	xscpu64_ui.c \
 	xvic_ui.c
 
+libtoolarch_a_SOURCES = \
+	archdep.c
+
 EXTRA_DIST = \
-	archdep_amiga.c \
-	archdep_amiga.h \
-	archdep_beos.c \
-	archdep_beos.h \
-	archdep_os2.c \
-	archdep_os2.h \
-	archdep_unix.c \
-	archdep_unix.h \
-	archdep_win32.c \
-	archdep_win32.h \
-	console_amiga.c \
-	console_sdl.c \
-	console_unix.c \
-	dynlib-unix.c \
-	dynlib-win32.c \
-	make-bindist_amiga.sh \
 	make-bindist_beos.sh \
-	make-bindist_qnx6.sh \
-	make-bindist_scosol.sh \
-	make-bindist_skyos.sh \
-	make-bindist_syllable.sh \
+	make-bindist_osx.sh \
 	make-bindist_win32.sh \
-	rs232dev-unix.c \
-	rs232dev-win32.c
+	make_bindist_win32_sdl.sh \
+	macOS-ui-runtime.sh \
+	Resources/VICE.icns \
+	vice-launcher.sh \
+	x11-launcher.sh \
+	vice_sdl.h
+
+if WINDOWS_COMPILE
+
+# Use Gtk's icon stuff to generate icon sets
+all:
+	(cd ../gtk3/data/win32 && $(MAKE))
+
+endif
+

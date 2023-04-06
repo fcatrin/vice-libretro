@@ -1,9 +1,8 @@
-/*
- * video.c - SDL video
+/** \brief  video.c
+ * \brief   SDL video (probably needs a more descriptive 'brief')
  *
- * Written by
- *  Hannu Nuotio <hannu.nuotio@tut.fi>
- *  Marco van den Heuvel <blackystardust68@yahoo.com>
+ * \author  Hannu Nuotio <hannu.nuotio@tut.fi>
+ * \author  Marco van den Heuvel <blackystardust68@yahoo.com>
  *
  * Based on code by
  *  Ettore Perazzoli
@@ -50,6 +49,7 @@
 #include "lightpendrv.h"
 #include "log.h"
 #include "machine.h"
+#include "mousedrv.h"
 #include "palette.h"
 #include "raster.h"
 #include "resources.h"
@@ -106,6 +106,7 @@ static const float sdl_gl_vertex_coord[4 * 4] = {
 
 static int sdl_gl_aspect_mode;
 static char *aspect_ratio_s = NULL;
+static char *aspect_ratio_factory_value_s = NULL;
 static double aspect_ratio;
 
 static int sdl_gl_flipx;
@@ -145,11 +146,7 @@ static int set_sdl_bitdepth(int d, void *param)
         return 0;
     }
     sdl_bitdepth = d;
-#if defined(HAVE_HWSCALE)
-    if (!((d == 0) || (d == 24) || (d == 32))) {
-        resources_set_int("HwScalePossible", 0);
-    }
-#endif
+
     /* update */
     return 0;
 }
@@ -241,7 +238,7 @@ static int set_sdl_gl_aspect_mode(int v, void *param)
     sdl_gl_aspect_mode = v;
 
     if (old_v != v) {
-        if (sdl_active_canvas && sdl_active_canvas->videoconfig->hwscale) {
+        if (sdl_active_canvas) {
             video_viewport_resize(sdl_active_canvas, 1);
         }
     }
@@ -275,7 +272,7 @@ static int set_aspect_ratio(const char *val, void *param)
     util_string_set(&aspect_ratio_s, buf);
 
     if (old_aspect != aspect_ratio) {
-        if (sdl_active_canvas && sdl_active_canvas->videoconfig->hwscale) {
+        if (sdl_active_canvas) {
             video_viewport_resize(sdl_active_canvas, 1);
         }
     }
@@ -324,30 +321,23 @@ static int set_sdl_gl_filter(int v, void *param)
 }
 #endif /* HAVE_HWSCALE */
 
-static const resource_string_t resources_string[] = {
+static resource_string_t resources_string[] = {
 #if defined(HAVE_HWSCALE)
-    { "AspectRatio", "1.0", RES_EVENT_NO, NULL,
+    /* CAUTION: position hardcoded below */
+    { "AspectRatio", NULL, RES_EVENT_NO, NULL,
       &aspect_ratio_s, set_aspect_ratio, NULL },
 #endif
     RESOURCE_STRING_LIST_END
 };
 
-#if defined(WATCOM_COMPILE)
-#define VICE_DEFAULT_BITDEPTH 32
-#else
 #define VICE_DEFAULT_BITDEPTH 0
-#endif
 
-#ifdef ANDROID_COMPILE
-#define SDLLIMITMODE_DEFAULT     SDL_LIMIT_MODE_MAX
-#define SDLCUSTOMWIDTH_DEFAULT   320
-#define SDLCUSTOMHEIGHT_DEFAULT  200
-#else
 #define SDLLIMITMODE_DEFAULT     SDL_LIMIT_MODE_OFF
 #define SDLCUSTOMWIDTH_DEFAULT   800
 #define SDLCUSTOMHEIGHT_DEFAULT  600
-#endif
 
+/* FIXME: more resources should have the same name as their GTK counterparts,
+          and the SDL prefix removed */
 static const resource_int_t resources_int[] = {
     { "SDLBitdepth", VICE_DEFAULT_BITDEPTH, RES_EVENT_NO, NULL,
       &sdl_bitdepth, set_sdl_bitdepth, NULL },
@@ -357,9 +347,9 @@ static const resource_int_t resources_int[] = {
       &sdl_custom_width, set_sdl_custom_width, NULL },
     { "SDLCustomHeight", SDLCUSTOMHEIGHT_DEFAULT, RES_EVENT_NO, NULL,
       &sdl_custom_height, set_sdl_custom_height, NULL },
-    { "SDLWindowWidth", 0, RES_EVENT_NO, NULL,
+    { "Window0Width", 0, RES_EVENT_NO, NULL,
       &sdl_window_width, set_sdl_window_width, NULL },
-    { "SDLWindowHeight", 0, RES_EVENT_NO, NULL,
+    { "Window0Height", 0, RES_EVENT_NO, NULL,
       &sdl_window_height, set_sdl_window_height, NULL },
 #if defined(HAVE_HWSCALE)
     { "SDLGLAspectMode", SDL_ASPECT_MODE_TRUE, RES_EVENT_NO, NULL,
@@ -376,13 +366,24 @@ static const resource_int_t resources_int[] = {
 
 int video_arch_resources_init(void)
 {
+#if defined(HAVE_HWSCALE)
+    char buf[0x10];
+#endif
     DBG(("%s", __func__));
 
     if (machine_class == VICE_MACHINE_VSID) {
-        if (joy_arch_resources_init() < 0) {
+        if (joy_sdl_resources_init() < 0) {
             return -1;
         }
     }
+
+#if defined(HAVE_HWSCALE)
+    /* KLUDGES: setup the factory default with a string, needs to be done at
+       runtime since float format depends on locale */
+    sprintf(buf, "%f", 1.0f);
+    util_string_set(&aspect_ratio_factory_value_s, buf);
+    resources_string[0].factory_value = aspect_ratio_factory_value_s;
+#endif
 
     if (resources_register_string(resources_string) < 0) {
         return -1;
@@ -407,6 +408,8 @@ void video_arch_resources_shutdown(void)
 /* ------------------------------------------------------------------------- */
 /* Video-related command-line options.  */
 
+/* FIXME: more options should have the same name as their GTK counterparts,
+          and the SDL prefix removed */
 static const cmdline_option_t cmdline_options[] =
 {
     { "-sdlbitdepth", SET_RESOURCE, CMDLINE_ATTRIB_NEED_ARGS,
@@ -422,10 +425,10 @@ static const cmdline_option_t cmdline_options[] =
       NULL, NULL, "SDLCustomHeight", NULL,
       "<height>", "Set custom resolution height" },
     { "-sdlinitialw", SET_RESOURCE, CMDLINE_ATTRIB_NEED_ARGS,
-      NULL, NULL, "SDLWindowWidth", NULL,
+      NULL, NULL, "Window0Width", NULL,
       "<width>", "Set intiial window width" },
     { "-sdlinitialh", SET_RESOURCE, CMDLINE_ATTRIB_NEED_ARGS,
-      NULL, NULL, "SDLWindowHeight", NULL,
+      NULL, NULL, "Window0Height", NULL,
       "<height>", "Set intiial window height" },
 #if defined(HAVE_HWSCALE)
     { "-sdlaspectmode", SET_RESOURCE, CMDLINE_ATTRIB_NEED_ARGS,
@@ -565,7 +568,7 @@ static video_canvas_t *sdl_canvas_create(video_canvas_t *canvas, unsigned int *w
     int hwscale = 0;
     int lightpen_updated = 0;
 #ifdef HAVE_HWSCALE
-    int rbits = 0, gbits = 0, bbits = 0;
+    int rbits = 0, gbits = 0, bbits = 0, abits = 0;
     const Uint32
 
 #if SDL_BYTEORDER == SDL_BIG_ENDIAN
@@ -585,12 +588,14 @@ static video_canvas_t *sdl_canvas_create(video_canvas_t *canvas, unsigned int *w
     new_width *= canvas->videoconfig->scalex;
     new_height *= canvas->videoconfig->scaley;
 
+    sdl_ui_set_window_icon(NULL);
+
     if ((canvas == sdl_active_canvas) && (canvas->fullscreenconfig->enable)) {
         fullscreen = 1;
     }
 
 #ifdef HAVE_HWSCALE
-    if ((canvas == sdl_active_canvas) && (canvas->videoconfig->hwscale)) {
+    if (canvas == sdl_active_canvas) {
         hwscale = 1;
     }
 #endif
@@ -652,18 +657,17 @@ static video_canvas_t *sdl_canvas_create(video_canvas_t *canvas, unsigned int *w
                 sdl_bitdepth = 32;
             /* fall through */
             case 32:
-                rbits = gbits = bbits = 8;
+                rbits = gbits = bbits = abits = 8;
                 sdl_gl_mode = GL_RGBA;
                 break;
             case 24:
                 rbits = gbits = bbits = 8;
+                abits = 0;
                 sdl_gl_mode = GL_RGB;
                 break;
             default:
                 log_error(sdlvideo_log, "%i bpp not supported in OpenGL.", sdl_bitdepth);
-                resources_set_int("HwScalePossible", 0);
                 hwscale = 0;
-                canvas->videoconfig->hwscale = 0;
                 flags = SDL_SWSURFACE;
                 break;
         }
@@ -671,6 +675,7 @@ static video_canvas_t *sdl_canvas_create(video_canvas_t *canvas, unsigned int *w
         SDL_GL_SetAttribute(SDL_GL_RED_SIZE, rbits);
         SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, gbits);
         SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, bbits);
+        SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, abits);
     }
 #endif
 
@@ -702,9 +707,7 @@ static video_canvas_t *sdl_canvas_create(video_canvas_t *canvas, unsigned int *w
     }
 
     if (canvas == sdl_active_canvas) {
-#ifndef ANDROID_COMPILE
         SDL_EventState(SDL_VIDEORESIZE, SDL_IGNORE);
-#endif
 #ifndef HAVE_HWSCALE
         new_screen = SDL_SetVideoMode(actual_width, actual_height, sdl_bitdepth, flags);
         new_width = new_screen->w;
@@ -720,8 +723,6 @@ static video_canvas_t *sdl_canvas_create(video_canvas_t *canvas, unsigned int *w
                 new_screen = SDL_SetVideoMode(actual_width, actual_height, sdl_bitdepth, flags);
             }
             if (!new_screen) { /* Did not work out quite well. Let's try without hwscale */
-                resources_set_int("HwScalePossible", 0);
-                canvas->videoconfig->hwscale = 0;
                 return sdl_canvas_create(canvas, width, height);
             }
             actual_width = new_screen->w;
@@ -749,9 +750,7 @@ static video_canvas_t *sdl_canvas_create(video_canvas_t *canvas, unsigned int *w
             }
         }
 #endif
-#ifndef ANDROID_COMPILE
         SDL_EventState(SDL_VIDEORESIZE, SDL_ENABLE);
-#endif
     } else {
 #ifdef HAVE_HWSCALE
         /* free the old hwscale screen when hwscaled screen is switched away */
@@ -788,12 +787,19 @@ static video_canvas_t *sdl_canvas_create(video_canvas_t *canvas, unsigned int *w
 
     if (canvas == sdl_active_canvas) {
         if (!fullscreen) {
-            resources_set_int("SDLWindowWidth", actual_width);
-            resources_set_int("SDLWindowHeight", actual_height);
+            resources_set_int("Window0Width", actual_width);
+            resources_set_int("Window0Height", actual_height);
         }
     }
 
-    log_message(sdlvideo_log, "%s (%s) %ix%i %ibpp %s%s", canvas->videoconfig->chip_name, (canvas == sdl_active_canvas) ? "active" : "inactive", actual_width, actual_height, sdl_bitdepth, hwscale ? "OpenGL " : "", (canvas->fullscreenconfig->enable) ? "(fullscreen)" : "");
+    log_message(sdlvideo_log, "%s (%s) %ux%u %ibpp %s%s",
+        canvas->videoconfig->chip_name,
+        (canvas == sdl_active_canvas) ? "active" : "inactive",
+        actual_width,
+        actual_height,
+        sdl_bitdepth,
+        hwscale ? "OpenGL " : "",
+        (canvas->fullscreenconfig->enable) ? "(fullscreen)" : "");
 #ifdef SDL_DEBUG
     log_message(sdlvideo_log, "Canvas %ix%i, real %ix%i", new_width, new_height, canvas->real_width, canvas->real_height);
 #endif
@@ -878,10 +884,10 @@ void video_canvas_refresh(struct video_canvas_s *canvas, unsigned int xs, unsign
 
         backup = canvas->draw_buffer->draw_buffer;
         canvas->draw_buffer->draw_buffer = canvas->draw_buffer_vsid->draw_buffer;
-        video_canvas_render(canvas, (uint8_t *)canvas->screen->pixels, w, h, xs, ys, xi, yi, canvas->screen->pitch, canvas->screen->format->BitsPerPixel);
+        video_canvas_render(canvas, (uint8_t *)canvas->screen->pixels, w, h, xs, ys, xi, yi, canvas->screen->pitch);
         canvas->draw_buffer->draw_buffer = backup;
     } else {
-        video_canvas_render(canvas, (uint8_t *)canvas->screen->pixels, w, h, xs, ys, xi, yi, canvas->screen->pitch, canvas->screen->format->BitsPerPixel);
+        video_canvas_render(canvas, (uint8_t *)canvas->screen->pixels, w, h, xs, ys, xi, yi, canvas->screen->pitch);
     }
 
     if (SDL_MUSTLOCK(canvas->screen)) {
@@ -889,7 +895,7 @@ void video_canvas_refresh(struct video_canvas_s *canvas, unsigned int xs, unsign
     }
 
 #if defined(HAVE_HWSCALE)
-    if (canvas->videoconfig->hwscale) {
+    {
         const float *v = &(sdl_gl_vertex_coord[sdl_gl_vertex_base]);
 
         if (canvas != sdl_active_canvas) {
@@ -946,15 +952,17 @@ void video_canvas_refresh(struct video_canvas_s *canvas, unsigned int xs, unsign
         glEnd();
 
         SDL_GL_SwapBuffers();
-    } else
-#endif
-
+    }
+#else
     SDL_UpdateRect(canvas->screen, xi, yi, w, h);
+#endif
+    ui_autohide_mouse_cursor();
 }
 
 int video_canvas_set_palette(struct video_canvas_s *canvas, struct palette_s *palette)
 {
     unsigned int i, col = 0;
+    video_render_color_tables_t *color_tables = &canvas->videoconfig->color_tables;
     SDL_PixelFormat *fmt;
     SDL_Color colors[256];
 
@@ -990,7 +998,7 @@ int video_canvas_set_palette(struct video_canvas_s *canvas, struct palette_s *pa
         SDL_SetColors(canvas->screen, colors, 0, palette->num_entries);
     } else {
         for (i = 0; i < 256; i++) {
-            video_render_setrawrgb(i, SDL_MapRGB(fmt, (Uint8)i, 0, 0), SDL_MapRGB(fmt, 0, (Uint8)i, 0), SDL_MapRGB(fmt, 0, 0, (Uint8)i));
+            video_render_setrawrgb(color_tables, i, SDL_MapRGB(fmt, (Uint8)i, 0, 0), SDL_MapRGB(fmt, 0, (Uint8)i, 0), SDL_MapRGB(fmt, 0, 0, (Uint8)i));
         }
         video_render_initraw(canvas->videoconfig);
     }
@@ -1026,10 +1034,10 @@ void video_canvas_resize(struct video_canvas_s *canvas, char resize_canvas)
             canvas->real_width = canvas->actual_width;
             canvas->real_height = canvas->actual_height;
         }
-	/* Recreating the video like this sometimes makes us lose the
-	   fact that keys were released or pressed. Reset the keyboard
-	   state. */
-	keyboard_key_clear();
+        /* Recreating the video like this sometimes makes us lose the
+        fact that keys were released or pressed. Reset the keyboard
+        state. */
+        keyboard_key_clear();
     }
 }
 
@@ -1046,7 +1054,7 @@ static void sdl_video_resize(unsigned int w, unsigned int h)
     vsync_suspend_speed_eval();
 
 #if defined(HAVE_HWSCALE)
-    if (sdl_active_canvas->videoconfig->hwscale && sdl_active_canvas->hwscale_screen) {
+    if (sdl_active_canvas->hwscale_screen) {
         int flags;
 
         if (sdl_active_canvas->fullscreenconfig->enable) {
@@ -1055,13 +1063,9 @@ static void sdl_video_resize(unsigned int w, unsigned int h)
             flags = SDL_OPENGL | SDL_SWSURFACE | SDL_RESIZABLE;
         }
 
-#ifndef ANDROID_COMPILE
         SDL_EventState(SDL_VIDEORESIZE, SDL_IGNORE);
-#endif
         sdl_active_canvas->hwscale_screen = SDL_SetVideoMode((int)w, (int)h, sdl_bitdepth, flags);
-#ifndef ANDROID_COMPILE
         SDL_EventState(SDL_VIDEORESIZE, SDL_ENABLE);
-#endif
 
 #ifdef SDL_DEBUG
         if (!sdl_active_canvas->hwscale_screen) {
@@ -1104,8 +1108,8 @@ void sdl_video_resize_event(unsigned int w, unsigned int h)
     }
     sdl_video_resize(w, h);
     if (!sdl_active_canvas->fullscreenconfig->enable) {
-        resources_set_int("SDLWindowWidth", sdl_active_canvas->actual_width);
-        resources_set_int("SDLWindowHeight", sdl_active_canvas->actual_height);
+        resources_set_int("Window0Width", sdl_active_canvas->actual_width);
+        resources_set_int("Window0Height", sdl_active_canvas->actual_height);
     }
 
 #endif /*  HAVE_HWSCALE */
@@ -1138,6 +1142,15 @@ void sdl_video_canvas_switch(int index)
     video_viewport_resize(canvas, 1);
 }
 
+int video_arch_get_active_chip(void)
+{
+    if (sdl_active_canvas_num == VIDEO_CANVAS_IDX_VDC) {
+        return VIDEO_CHIP_VDC;
+    } else {
+        return VIDEO_CHIP_VICII;
+    }
+}
+
 void video_arch_canvas_init(struct video_canvas_s *canvas)
 {
     DBG(("%s: (%p, %i)", __func__, canvas, sdl_num_screens));
@@ -1146,8 +1159,6 @@ void video_arch_canvas_init(struct video_canvas_s *canvas)
         log_error(sdlvideo_log, "Too many canvases!");
         archdep_vice_exit(-1);
     }
-
-    canvas->video_draw_buffer_callback = NULL;
 
     canvas->fullscreenconfig = lib_calloc(1, sizeof(fullscreenconfig_t));
 
@@ -1192,10 +1203,20 @@ void sdl_ui_init_finalize(void)
 {
     unsigned int width = sdl_active_canvas->draw_buffer->canvas_width;
     unsigned int height = sdl_active_canvas->draw_buffer->canvas_height;
+    int minimized = 0;
+
+    /* unfortunately we cant create the window minimized in SDL1 */
+    resources_get_int("StartMinimized", &minimized);
 
     sdl_canvas_create(sdl_active_canvas, &width, &height); /* set the real canvas size */
+    /* minimize window after it was created */
+    if (minimized) {
+        SDL_WM_IconifyWindow();
+    }
+
     sdl_ui_finalized = 1;
-    ui_check_mouse_cursor();
+
+    mousedrv_mouse_changed();
 }
 
 int sdl_ui_get_mouse_state(int *px, int *py, unsigned int *pbuttons)
@@ -1240,4 +1261,16 @@ int sdl_ui_get_mouse_state(int *px, int *py, unsigned int *pbuttons)
 void sdl_ui_consume_mouse_event(SDL_Event *event)
 {
     /* This is a no-op on SDL1 */
+    ui_autohide_mouse_cursor();
+}
+
+void sdl_ui_set_window_title(char *title)
+{
+    char *dummy = NULL;
+    char *icon = NULL;
+
+    if (sdl_ui_finalized) {
+        SDL_WM_GetCaption(&dummy, &icon);
+        SDL_WM_SetCaption(title, icon);
+    }
 }

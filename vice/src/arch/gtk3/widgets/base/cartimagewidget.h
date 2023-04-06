@@ -28,14 +28,13 @@
 #ifndef VICE_CARTIMAGEWIDGET_H
 #define VICE_CARTIMAGEWIDGET_H
 
-#include "vice.h"
 #include <gtk/gtk.h>
 
-GtkWidget *cart_image_widget_create(
-        GtkWidget *parent, const char *title,
-        const char *resource_fname, const char *resource_write,
-        int (*func_save)(int, const char *),
-        int (*func_flush)(int),
-        const char *cart_name, int cart_id);
+GtkWidget *cart_image_widget_create(GtkWidget *parent,
+                                    const char *title,
+                                    const char *resource_fname,
+                                    const char *resource_write,
+                                    const char *cart_name,
+                                    int cart_id);
 
 #endif

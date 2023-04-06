@@ -33,7 +33,6 @@
 #include "debug_gtk3.h"
 #include "cbm2model.h"
 #include "cartridge.h"
-#include "carthelpers.h"
 #include "crtcontrolwidget.h"
 #include "machine.h"
 #include "machinemodelwidget.h"
@@ -41,7 +40,6 @@
 #include "ui.h"
 #include "uicart.h"
 #include "uimachinewindow.h"
-#include "settings_sampler.h"
 #include "vicii.h"
 #include "videomodelwidget.h"
 #include "widgethelpers.h"
@@ -123,14 +121,6 @@ int cbm5x0ui_init(void)
     video_model_widget_set_title("VIC-II model");
     video_model_widget_set_resource("MachineVideoStandard");
     video_model_widget_set_models(cbm5x0_vicii_models);
-
-    settings_sampler_set_devices_getter(sampler_get_devices);
-
-    /* uicart_set_detect_func(cartridge_detect); only cbm2/plus4 */
-    /*uicart_set_list_func(cartridge_get_info_list);*/
-    uicart_set_attach_func(cartridge_attach_image);
-    /*uicart_set_freeze_func(cartridge_trigger_freeze);*/
-    uicart_set_detach_func(cartridge_detach_image);
 
     settings_model_widget_set_model_func(cbm2model_get);
     return 0;

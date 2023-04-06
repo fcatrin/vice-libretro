@@ -39,7 +39,6 @@
 #include "sampler.h"
 #include "ui.h"
 #include "uimachinewindow.h"
-#include "settings_sampler.h"
 #include "vdc.h"
 #include "vicii.h"
 #include "videomodelwidget.h"
@@ -49,24 +48,10 @@
 #include "clockport.h"
 
 #include "cartridge.h"
-#include "reu.h"
-#include "reuwidget.h"
-#include "ramcartwidget.h"
-#include "dqbbwidget.h"
-#include "expertwidget.h"
-#include "isepicwidget.h"
-#include "gmod2widget.h"
-#include "mmcrwidget.h"
-#include "mmc64widget.h"
-#include "retroreplaywidget.h"
-#include "easyflashwidget.h"
-#include "rrnetmk3widget.h"
-#include "uicart.h"
-#include "carthelpers.h"
 #include "tapecart.h"
-#include "tapeportdeviceswidget.h"
 #include "c128model.h"
 #include "settings_model.h"
+#include "crtpreviewwidget.h"
 
 #include "c128ui.h"
 
@@ -78,8 +63,10 @@
 static const char *c128_model_list[] = {
     "C128 PAL",
     "C128D PAL",
+    "C128DCR PAL",
     "C128 NTSC",
     "C128D NTSC",
+    "C128DCR NTSC",
     NULL
 };
 
@@ -150,7 +137,8 @@ int c128ui_init_early(void)
  */
 int c128ui_init(void)
 {
-    int eighty;
+    int forty;
+    int hide_vdc;
 
     machine_model_widget_getter(c128model_get);
     machine_model_widget_setter(c128model_set);
@@ -160,50 +148,35 @@ int c128ui_init(void)
     video_model_widget_set_resource("MachineVideoStandard");
     video_model_widget_set_models(c128_vicii_models);
 
-    settings_sampler_set_devices_getter(sampler_get_devices);
-    clockport_device_widget_set_devices((void *)clockport_supported_devices);
-
-    /* I/O extension function pointers */
-    carthelpers_set_functions(
-            cartridge_save_image,
-            cartridge_flush_image,
-            cartridge_type_enabled,
-            cartridge_enable,
-            cartridge_disable);
-
-    /* uicart_set_detect_func(cartridge_detect); only cbm2/plus4 */
-    uicart_set_list_func(cartridge_get_info_list);
-    uicart_set_attach_func(cartridge_attach_image);
-    uicart_set_freeze_func(cartridge_trigger_freeze);
-    uicart_set_detach_func(cartridge_detach_image);
-    uicart_set_default_func(cartridge_set_default);
-    uicart_set_filename_func(cartridge_current_filename);
-    uicart_set_wipe_func(cartridge_wipe_filename);
-
-    /* set tapecart flush function */
-    tapeport_devices_widget_set_tapecart_flush_func(tapecart_flush_tcrt);
-
     /* set model getter for the model settings dialog */
     settings_model_widget_set_model_func(c128model_get);
 
     /* push VDC display to front depending on 40/80 key */
-    if (resources_get_int("C128ColumnKey", &eighty) >= 0) {
-        debug_gtk3("got 80 col mode: %d.", eighty);
+    if (resources_get_int("C128ColumnKey", &forty) >= 0) {
+        GtkWidget *window;
 
-        if (!eighty) {
-            GtkWidget *window = ui_get_window_by_index(1); /* VDC */
+        if (forty) {
+            window = ui_get_window_by_index(0); /* VICIIe */
+        } else {
+            window = ui_get_window_by_index(1); /* VDC */
+        }
+        if (window != NULL) {
+            gtk_window_present(GTK_WINDOW(window));
+        }
+    }
+
+    /* Hide VDC window, ignoring the stuff before this */
+    if (resources_get_int("C128HideVDC", &hide_vdc) >= 0) {
+        GtkWidget *window;
+
+        if (hide_vdc) {
+            window = ui_get_window_by_index(1); /* VDC */
             if (window != NULL) {
-                /* this is a bit dubious, but it seems any bring-to-front code
-                 * has been removed from gtk3, so we just force the VDC window
-                 * to front and immediately disable this, still keeping the
-                 * VDC window as the top level window, but allowing moving
-                 * the VICII in front of it.
-                 */
-                gtk_window_set_keep_above(GTK_WINDOW(window), TRUE);
-                gtk_window_set_keep_above(GTK_WINDOW(window), FALSE);
+                gtk_widget_hide(window);
             }
         }
     }
+
     return 0;
 }
 
