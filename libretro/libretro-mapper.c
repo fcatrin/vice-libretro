@@ -166,12 +166,7 @@ void emu_function(int function)
          opt_aspect_ratio_locked = true;
          break;
       case EMU_ZOOM_MODE:
-         if (zoom_mode_id == 0 && opt_zoom_mode_id == 0)
-            break;
-         if (zoom_mode_id > 0)
-            zoom_mode_id = 0;
-         else if (zoom_mode_id == 0)
-            zoom_mode_id = opt_zoom_mode_id;
+         zoom_mode_id = zoom_mode_id >= 3 ? 0 : zoom_mode_id + 1;
          break;
       case EMU_TURBO_FIRE:
          if (turbo_fire_button_disabled == -1 && turbo_fire_button == -1)
