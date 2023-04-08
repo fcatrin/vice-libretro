@@ -5864,6 +5864,7 @@ bool retro_load_game(const struct retro_game_info *info)
          return false;
    }
 
+   retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
    pre_main();
 
 #if defined(__XPET__) || defined(__XCBM2__) || defined(__XVIC__)
