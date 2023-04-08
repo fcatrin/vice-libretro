@@ -63,6 +63,7 @@ unsigned int mouse_value[2] = {0};
 unsigned int mouse_speed[2] = {0};
 
 unsigned int statusbar = 0;
+unsigned int statusbar_prev = 0;
 unsigned int warpmode = 0;
 extern bool retro_vkbd;
 extern bool retro_vkbd_transparent;
@@ -138,9 +139,17 @@ void emu_function(int function)
    {
       case EMU_VKBD:
          retro_vkbd = !retro_vkbd;
+         resources_set_int("SDLStatusbar", retro_vkbd ? 1 : statusbar_prev);
+         if (retro_vkbd) {
+            statusbar_prev = statusbar;
+            statusbar = 1;
+         } else {
+            statusbar = statusbar_prev;
+         }
          break;
       case EMU_STATUSBAR:
          statusbar = (statusbar) ? 0 : 1;
+         statusbar_prev = statusbar;
          resources_set_int("SDLStatusbar", statusbar);
          break;
       case EMU_JOYPORT:
