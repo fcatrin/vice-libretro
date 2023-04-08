@@ -3,6 +3,8 @@
 *.so
 *.dll
 *.a
+obj
+.idea
 GPATH
 GTAGS
 GRTAGS
